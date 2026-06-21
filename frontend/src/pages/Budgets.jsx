@@ -264,15 +264,15 @@ export default function Budzety({ user }) {
                       {limit > 0 ? (
                         <div className="flex items-center gap-2 mt-3 pt-3 border-t border-gray-50">
                           <span className="text-xs text-gray-400 font-medium whitespace-nowrap">Budżet:</span>
-          <input
-                             type="number"
-                             min="0.01"
-                             step="0.01"
-                             value={editingBudgets['cat_' + bud.cat_id] ?? limit}
-                             onChange={(e) => setEditingBudgets(prev => ({ ...prev, ['cat_' + bud.cat_id]: parseFloat(e.target.value) || 0 }))}
-                            onKeyDown={(e) => { if (e.key === 'Enter') handleSaveInline(bud.id, 'cat_' + bud.cat_id); }}
-                                                        className="w-28 px-3 py-1.5 bg-gray-50 border border-gray-200 rounded-lg text-sm font-semibold text-gray-700 outline-none focus:border-[#32a852] focus:ring-1 focus:ring-green-100 transition-all tabular-nums"
-                                                      />
+                           <input
+                              type="text"
+                              inputMode="numeric"
+                              pattern="[0-9]*"
+                              value={editingBudgets['cat_' + bud.cat_id] ?? ''}
+                              onChange={(e) => { const v = e.target.value.replace(/[^0-9.]/g, ''); setEditingBudgets(prev => ({ ...prev, ['cat_' + bud.cat_id]: parseFloat(v || '') })) }}
+                             onKeyDown={(e) => { if (e.key === 'Enter') handleSaveInline(bud.id, 'cat_' + bud.cat_id); }}
+                                                       className="w-28 px-3 py-1.5 bg-gray-50 border border-gray-200 rounded-lg text-sm font-semibold text-gray-700 outline-none focus:border-[#32a852] focus:ring-1 focus:ring-green-100 transition-all tabular-nums"
+                                                       />
                                                       <span className="text-xs text-gray-400">PLN</span>
                                {editingBudgets['cat_' + bud.cat_id] !== originalValues['cat_' + bud.cat_id] && (
                                         <>

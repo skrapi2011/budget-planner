@@ -308,7 +308,7 @@ function CategoryRow({ cat }) {
         </div>
       </div>
       {budzet > 0 && (
-        <div className="w-full h-3 bg-gray-200 rounded-full overflow-hidden">
+        <div className="w-full h-3 bg-gray-200 dark:bg-slate-700 rounded-full overflow-hidden">
           <div
             style={{ width: `${Math.max(pct, wydatki > 0 ? 5 : 0)}%`, backgroundColor: pct > 100 ? '#ef4444' : cat.color || '#3b82f6' }}
             className="h-full rounded-full transition-all duration-700"
