@@ -35,15 +35,15 @@ export default function Dashboard({ user }) {
   async function loadDashboard() {
     setLoading(true);
     try {
-      const [data, budgets, catList] = await Promise.all([
+      const [data, rawBudgets, catList] = await Promise.all([
         api.getDashboardData(monthStr).catch(() => null),
-        (api.getBudgetsByMonth(parseInt(monthStr.split('-')[1]), parseInt(monthStr.split('-')[0])) || []).then(b => Array.isArray(b) ? b : []).catch(() => []),
+        api.getBudgetsViewByMonth(monthStr).catch(e => { console.warn('getBudgetsView failed', e); return []; }),
         api.getCategories(true).catch(() => []),
       ]);
       setDashData(data);
       setActiveCategories(catList || []);
       // Map budget response to chart-friendly format
-      const budgetsMapped = (budgets || []).map(c => ({
+      const budgetsMapped = (rawBudgets || []).map(c => ({
         name: c.category_name,
         color: c.color,
         icon: c.icon,
@@ -308,9 +308,9 @@ function CategoryRow({ cat }) {
         </div>
       </div>
       {budzet > 0 && (
-        <div className="w-full h-3 bg-gray-100 rounded-full overflow-hidden shadow-inner">
+        <div className="w-full h-3 bg-gray-200 rounded-full overflow-hidden">
           <div
-            style={{ width: `${pct}%`, backgroundColor: pct > 100 ? '#ef4444' : cat.color || '#3b82f6' }}
+            style={{ width: `${Math.max(pct, wydatki > 0 ? 5 : 0)}%`, backgroundColor: pct > 100 ? '#ef4444' : cat.color || '#3b82f6' }}
             className="h-full rounded-full transition-all duration-700"
           />
         </div>
