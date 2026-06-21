@@ -195,7 +195,7 @@ export default function Dashboard({ user }) {
                   {/* Bar Chart */}
         <div className="bg-white dark:bg-slate-800 rounded-xl shadow-sm p-5 hover:shadow-md transition-shadow">
           <div className="flex items-center justify-between mb-4">
-            <h3 className="text-base font-bold">Wydatki w czasie</h3>
+            <h3 className="text-base font-bold text-gray-800 dark:text-slate-200">Wydatki w czasie</h3>
             <div className="flex items-center gap-2">
             <span className="text-xs text-gray-500 dark:text-slate-400 whitespace-nowrap">Suma: {formatMoney(getBarChartData().reduce((s,d)=>s+(d.actual||0), 0))}</span>
               {['3m', '6m', '12m', 'all'].map((opt) => (
