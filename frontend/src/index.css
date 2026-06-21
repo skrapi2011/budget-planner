@@ -1,0 +1,28 @@
+@import "tailwindcss";
+
+body {
+  margin: 0;
+  font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+  background-color: #f3f4f6;
+}
+
+::-webkit-scrollbar {
+  width: 6px;
+}
+::-webkit-scrollbar-track {
+  background: #f1f1f1;
+}
+::-webkit-scrollbar-thumb {
+  background: #c0c0c0;
+  border-radius: 3px;
+}
+.no-scrollbar::-webkit-scrollbar {
+  display: none;
+}
+
+.modal-overlay {
+  transition: opacity 0.2s ease-in-out;
+}
+.modal-content {
+  transition: transform 0.2s ease-in-out, opacity 0.2s ease-in-out;
+}

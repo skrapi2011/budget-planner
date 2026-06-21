@@ -1,0 +1,57 @@
+# Virtual environments
+**/venv/
+**/.venv/
+env/
+.venv/
+
+# Python
+**/__pycache__/
+**/*.py[cod]
+*$py.class
+*.so
+.Python
+build/
+develop-eggs/
+dist/
+downloads/
+eggs/
+.eggs/
+lib/
+lib64/
+parts/
+sdist/
+var/
+wheels/
+*.egg-info/
+.installed.cfg
+*.egg
+
+# Byte-compiled / optimized
+**/*.pyc
+
+# Node.js frontend
+frontend/node_modules/
+frontend/dist/
+
+# Database
+backend/data/baza.db
+backend/data/*.db
+!backend/data/.gitkeep
+
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo
+*~
+.project
+.settings/
+.vs/
+
+# OS
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# Git
+.gitignore.*
