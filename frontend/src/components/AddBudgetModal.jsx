@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useRef } from 'react';
 import * as api from '../api';
 
 export default function AddBudgetModal({ monthStr, categories, onClose, onAdded }) {
@@ -6,13 +6,28 @@ export default function AddBudgetModal({ monthStr, categories, onClose, onAdded 
   const [amount, setAmount] = useState('');
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState(null);
+  const [fallbackCategories, setFallbackCategories] = useState([]);
+  const hasFetchedRef = useRef(false);
+
+  // Use fallback categories if prop is empty (race condition guard)
+  const effectiveCats = categories && categories.length > 0 ? categories : fallbackCategories;
+
+
+  useEffect(() => {
+    if ((categories === undefined || categories.length === 0) && !hasFetchedRef.current && fallbackCategories.length === 0) {
+      hasFetchedRef.current = true;
+      api.getCategories(true)
+        .then(cats => setFallbackCategories(cats || []))
+        .catch(() => setError('Nie udało się załadować kategorii. Sprawdź połączenie z internetem.'))
+    }
+  }, [categories, fallbackCategories.length]);
 
   // when categories load, auto-select if none selected yet
   useEffect(() => {
-    if (!selectedCatId && categories.length > 0) {
-      setSelectedCatId(categories[0].id?.toString() || '');
+    if (!selectedCatId && effectiveCats.length > 0) {
+      setSelectedCatId(effectiveCats[0].id?.toString() || '');
     }
-  }, [categories, selectedCatId]);
+  }, [effectiveCats, selectedCatId]);
 
   async function handleSubmit(e) {
     e.preventDefault();
@@ -24,12 +39,14 @@ export default function AddBudgetModal({ monthStr, categories, onClose, onAdded 
     setLoading(true);
     setError(null);
     try {
-      await api.createBudget({
-        category_id: parseInt(selectedCatId),
-        amount_monthly: amt,
-        month_year: monthStr,
-      });
-      onAdded();
+     await api.createBudget({
+          category_id: parseInt(selectedCatId),
+          amount_monthly: amt,
+          month_year: monthStr,
+        });
+        onAdded();
+        onClose();
+      onClose();
     } catch (err) {
       setError(err.message || 'Nie udało się dodać budżetu');
     } finally {
@@ -55,11 +72,13 @@ export default function AddBudgetModal({ monthStr, categories, onClose, onAdded 
           {/* category pick */}
           <div>
             <label className="block text-sm font-medium text-gray-600 mb-1.5">Kategoria</label>
-            {categories.length === 0 ? (
-              <p className="text-sm text-amber-600 bg-amber-50 border border-amber-200 rounded-lg px-3 py-2">Brak kategorii — najpierw dodaj kategorię na stronie Kategorie.</p>
+            {effectiveCats.length === 0 ? (
+              <div className="flex items-center justify-center py-8">
+                <div className="w-5 h-5 border-2 border-gray-300 border-t-green-600 rounded-full animate-spin" />
+              </div>
             ) : (
               <div className="grid grid-cols-2 sm:grid-cols-3 gap-2 max-h-48 overflow-y-auto border border-gray-200 rounded-lg p-2 bg-white">
-                {categories.map((cat) => (
+                {effectiveCats.map((cat) => (
                   <button
                     type="button"
                     key={cat.id}

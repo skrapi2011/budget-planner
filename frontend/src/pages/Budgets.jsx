@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useRef } from 'react';
 import Layout from '../components/Layout';
 import * as api from '../api';
 import AddBudgetModal from '../components/AddBudgetModal';
@@ -106,6 +106,8 @@ export default function Budzety({ user }) {
   };
 
   const hasMissingCategory = categories.some(c => !budgets.find(b => b.category_id === c.id));
+
+  const categoriesLoaded = categories.length > 0;
 
   return (
     <Layout username={user}>
@@ -300,6 +302,7 @@ export default function Budzety({ user }) {
             <AddBudgetModal
               monthStr={monthStr}
               categories={categories.filter(c => !budgets.find(b => b.category_id === c.id))}
+              categoriesLoaded={categoriesLoaded}
               onClose={() => setShowModal(false)}
               onAdded={() => loadBudgets(monthStr)}
             />
