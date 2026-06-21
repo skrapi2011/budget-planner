@@ -1,4 +1,5 @@
-const API_BASE = '/api';
+const SERVER_URL = import.meta.env.VITE_API_URL || '';
+const API_BASE = `${SERVER_URL}/api`;
 
 async function _fetch(url, options) {
   const fullUrl = url.startsWith('http') ? url : `${API_BASE}${url}`;
@@ -87,19 +88,27 @@ export async function updateCategory(id, data) {
 
 export async function deleteCategory(id) {
   return _fetch(`/categories/${id}`, { method: 'DELETE', headers: getHeaders(true) }).catch(async () => {
-    try { await fetch(`${API_BASE}/transactions`, { method: 'GET', headers: getHeaders(true) }); } catch {}
+    try { await _fetch(`/transactions`, { method: 'GET', headers: getHeaders(true) }); } catch {}
     return _deleteCategory(id);
   });
 }
 
 async function _deleteCategory(id) {
-  try { await fetch(`/api/categories/${id}`, { method: 'DELETE', headers: getHeaders(true) }); } catch {}
+  try { await _fetch(`/categories/${id}`, { method: 'DELETE', headers: getHeaders(true) }); } catch {}
 }
 
 // ---- BUDGETS ----
 
 export async function createBudget(data) {
-  return _fetch('/budgets', { method: 'POST', headers: getHeaders(true), body: JSON.stringify({ category_id: Number(data.categoryId || data.category_id), amount_monthly: parseFloat(data.amount_monthly || data.budzet), month_year: data.month_year }) });
+  return _fetch('/budgets', { 
+    method: 'POST', 
+    headers: getHeaders(true), 
+    body: JSON.stringify({ 
+      category_id: Number(data.categoryId || data.category_id), 
+      amount_monthly: parseFloat(data.amount_monthly || data.budzet), 
+      month_year: data.month_year 
+    }) 
+  });
 }
 
 export async function updateBudget(id, data) {
@@ -109,7 +118,17 @@ export async function updateBudget(id, data) {
 // ---- TRANSACTIONS ----
 
 export async function addTransaction(data) {
-  return _fetch('/transactions', { method: 'POST', headers: getHeaders(true), body: JSON.stringify({ category_id: Number(data.categoryId || data.category_id), date: data.date, amount: parseFloat(data.amount), type: data.type || 'wydatek', description: data.description || '' }) });
+  return _fetch('/transactions', { 
+    method: 'POST', 
+    headers: getHeaders(true), 
+    body: JSON.stringify({ 
+      category_id: Number(data.categoryId || data.category_id), 
+      date: data.date, 
+      amount: parseFloat(data.amount), 
+      type: data.type || 'wydatek', 
+      description: data.description || '' 
+    }) 
+  });
 }
 
 export async function deleteTransaction(id) {
@@ -120,11 +139,8 @@ export async function deleteTransaction(id) {
 export async function getTransactionsAll(month, year) {
   const params = new URLSearchParams();
   if (month && year) {
-    // backend expects YYYY-MM format but Dashboard/Budzety pass separate month and year integers
-    // We construct a proper year-month string from the values passed at call sites:
-    //   ExpensesView calls getTransactionsAll(mStr, year) where mStr="2026-04" and year=2026
     if (String(month).includes('-')) {
-      params.set('month', month); // already YYYY-MM
+      params.set('month', month);
     } else {
       const yr = String(year ?? '').padEnd(4, '0');
       const mo = String(month || new Date().getMonth() + 1).padStart(2, '0');
@@ -154,7 +170,6 @@ export async function updateTransactionTags(txId, tagsArray) {
 }
 
 export async function deleteTag(tagToRemove) {
-  // Backend has no dedicated tag-delete route; we need to remove the tag from transactions that use it.
   try {
     const txns = await _fetch('/transactions', { method: 'GET', headers: getHeaders(true) });
     for (const t of (txns || [])) {
@@ -169,7 +184,6 @@ export async function deleteTag(tagToRemove) {
 }
 
 export async function updateTagName(editId, newName) {
-  // Backend has no tag rename endpoint; we do it per-transaction like delete.
   try {
     const txns = await _fetch('/transactions', { method: 'GET', headers: getHeaders(true) });
     for (const t of (txns || [])) {
@@ -191,12 +205,10 @@ export async function getBudgetsByMonth(month, year) {
 }
 
 export async function getStatsSummary(month, year) {
-  // Uses POST /api/stats/month-summary endpoint on backend
   const params = new URLSearchParams();
   if (typeof month === 'string' && !isNaN(Number(month)) && typeof year === 'number') {
     params.set('month', `${String(year).padEnd(4,'0')}-${String(month).padStart(2,'0')}`);
   } else {
-    // For Dashboard: getStatsSummary(strToFullDate(mStr), yearInt) where mStr='2026-04' and year=2026
     const yr = String(year).padEnd(4, '0');
     const mo = isNaN(Number(month)) ? month.split('-')[1] : String(month).padStart(2,'0');
     params.set('month', `${yr}-${mo}`);
@@ -210,7 +222,7 @@ export async function getDashboardData(month) {
 }
 
 export async function getRecentTransactions(limit) {
-  return _fetch('/transactions/recent', { method: 'GET', headers: getHeaders(true), body: JSON.stringify({ limit }) });
+  return _fetch(`/transactions/recent?limit=${limit}`, { method: 'GET', headers: getHeaders(true) });
 }
 
 /* ===========================================
