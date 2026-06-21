@@ -1,9 +1,15 @@
 @import "tailwindcss";
 
+@custom-variant dark (&:is(.dark *));
+
 body {
   margin: 0;
   font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
   background-color: #f3f4f6;
+}
+
+.dark body {
+  background-color: #0B1120;
 }
 
 ::-webkit-scrollbar {
@@ -14,6 +20,14 @@ body {
 }
 ::-webkit-scrollbar-thumb {
   background: #c0c0c0;
+  border-radius: 3px;
+}
+
+.dark ::-webkit-scrollbar-track {
+  background: #1e293b;
+}
+.dark ::-webkit-scrollbar-thumb {
+  background: #475569;
   border-radius: 3px;
 }
 .no-scrollbar::-webkit-scrollbar {
