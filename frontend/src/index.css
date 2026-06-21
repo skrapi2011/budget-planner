@@ -40,3 +40,18 @@ body {
 .modal-content {
   transition: transform 0.2s ease-in-out, opacity 0.2s ease-in-out;
 }
+
+*, :before, :after {
+  box-sizing: border-box;
+}
+
+body, button, a, input[type="number"], input[type="text"] {
+  cursor: default;
+}
+
+button:not(:disabled),
+a[href],
+[onclick],
+[role="button"] {
+  cursor: pointer;
+}
