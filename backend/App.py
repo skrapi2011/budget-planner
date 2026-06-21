@@ -10,11 +10,13 @@ from flask import Flask, request, jsonify, g
 from werkzeug.security import generate_password_hash, check_password_hash
 from database import create_tables, get_connection, DB_PATH
 from functools import wraps
+from flask_cors import CORS
 
 
 SECRET_KEY = os.environ.get("SECRET_KEY", "planowanie-wydatkow-jwt")
 
 app = Flask(__name__)
+CORS(app)
 app.config["SECRET_KEY"] = SECRET_KEY
 
 
