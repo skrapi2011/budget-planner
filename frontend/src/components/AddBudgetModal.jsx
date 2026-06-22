@@ -71,9 +71,13 @@ export default function AddBudgetModal({ monthStr, categories, onClose, onAdded 
           <div>
             <label className="block text-sm font-medium text-gray-600 mb-1.5">Kategoria</label>
             {effectiveCats.length === 0 ? (
-              <div className="flex items-center justify-center py-8">
-                <div className="w-5 h-5 border-2 border-gray-300 border-t-green-600 rounded-full animate-spin" />
-              </div>
+              categories === undefined ? (
+                <div className="flex items-center justify-center py-8">
+                  <div className="w-5 h-5 border-2 border-gray-300 border-t-green-600 rounded-full animate-spin" />
+                </div>
+              ) : (
+                <p className="text-sm text-amber-600 bg-amber-50 border border-amber-200 rounded-lg px-3 py-2">Brak kategorii — najpierw dodaj kategorię na stronie Kategorie.</p>
+              )
             ) : (
               <div className="grid grid-cols-2 sm:grid-cols-3 gap-2 max-h-48 overflow-y-auto border border-gray-200 rounded-lg p-2 bg-white">
                 {effectiveCats.map((cat) => (
