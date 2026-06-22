@@ -1,4 +1,4 @@
-import { useState, useEffect, useRef } from 'react';
+import { useState, useEffect } from 'react';
 import Layout from '../components/Layout';
 import * as api from '../api';
 import AddBudgetModal from '../components/AddBudgetModal';
