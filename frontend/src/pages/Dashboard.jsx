@@ -35,15 +35,15 @@ export default function Dashboard({ user }) {
   async function loadDashboard() {
     setLoading(true);
     try {
-      const [data, budgets, catList] = await Promise.all([
+      const [data, rawBudgets, catList] = await Promise.all([
         api.getDashboardData(monthStr).catch(() => null),
-        (api.getBudgetsByMonth(parseInt(monthStr.split('-')[1]), parseInt(monthStr.split('-')[0])) || []).then(b => Array.isArray(b) ? b : []).catch(() => []),
+        api.getBudgetsViewByMonth(monthStr).catch(e => { console.warn('getBudgetsView failed', e); return []; }),
         api.getCategories(true).catch(() => []),
       ]);
       setDashData(data);
       setActiveCategories(catList || []);
       // Map budget response to chart-friendly format
-      const budgetsMapped = (budgets || []).map(c => ({
+      const budgetsMapped = (rawBudgets || []).map(c => ({
         name: c.category_name,
         color: c.color,
         icon: c.icon,
@@ -107,13 +107,13 @@ export default function Dashboard({ user }) {
     <Layout username={user}>
       {/* Month Navigation */}
       <div className="flex items-center justify-between mb-8">
-        <button onClick={prevMonth} className="p-2 rounded-lg bg-white shadow-sm hover:bg-gray-50 transition-colors text-gray-600 border border-gray-200">
+        <button onClick={prevMonth} className="p-2 rounded-lg bg-white dark:bg-slate-800 shadow-sm hover:bg-gray-50 dark:hover:bg-slate-700 transition-colors text-gray-600 dark:text-slate-300 border border-gray-200 dark:border-slate-700">
           <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 19l-7-7 7-7" /></svg>
         </button>
-        <h2 className="text-xl font-bold text-gray-800">
+        <h2 className="text-xl font-bold text-gray-800 dark:text-slate-200">
           {MONTH_NAMES[parseInt(monthStr.split('-')[1], 10) - 1]} {monthStr.split('-')[0]}
         </h2>
-        <button onClick={nextMonth} className="p-2 rounded-lg bg-white shadow-sm hover:bg-gray-50 transition-colors text-gray-600 border border-gray-200">
+       <button onClick={nextMonth} className="p-2 rounded-lg bg-white dark:bg-slate-800 shadow-sm hover:bg-gray-50 dark:hover:bg-slate-700 transition-colors text-gray-600 dark:text-slate-300 border border-gray-200 dark:border-slate-700">
           <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5l7 7-7 7" /></svg>
         </button>
       </div>
@@ -131,7 +131,7 @@ export default function Dashboard({ user }) {
         {/* Donut Chart */}
         <Card title="Struktura wydatków według kategorii (wszystkie lata)">
           {chart_data.length === 0 ? (
-            <p className="text-center text-gray-400 py-12">Brak danych. Dodaj transakcje aby zobaczyć wykres.</p>
+            <p className="text-center text-gray-400 dark:text-slate-500 py-12">Brak danych. Dodaj transakcje aby zobaczyć wykres.</p>
           ) : (() => {
             const sorted = [...chart_data].sort((a, b) => (b.value || 0) - (a.value || 0));
             return (
@@ -143,15 +143,15 @@ export default function Dashboard({ user }) {
                   minWidth: '160px', 
                   overflowY: 'auto'
                 }}
-                className="no-scrollbar space-y-2 shrink-0 rounded-xl border border-gray-300 p-4"
+                 className="no-scrollbar space-y-2 shrink-0 rounded-xl border border-gray-300 dark:border-slate-600 p-4"
               >
 
                   {sorted.map((item) => (
                     <div key={item.name} className="flex items-center gap-2 py-1">
                       <span style={{ backgroundColor: item.color || '#94a3b8' }} className="w-3 h-3 rounded-full shrink-0" />
                       <div className="flex flex-col">
-                        <span className="text-sm font-medium text-gray-700">{item.name}</span>
-                        <span className="text-xs text-gray-400">{formatMoney(item.value)}</span>
+                        <span className="text-sm font-medium text-gray-700 dark:text-slate-200">{item.name}</span>
+                        <span className="text-xs text-gray-400 dark:text-slate-500">{formatMoney(item.value)}</span>
                       </div>
                     </div>
                   ))}
@@ -182,7 +182,7 @@ export default function Dashboard({ user }) {
                   {/* Sum in center */}
                   <div className="absolute flex items-center justify-center" style={{ width: 90, height: 90, left: "50%", top: "50%", marginLeft: -45, marginTop: -45 }}>
                     <div style={{ textAlign: 'center' }}>
-                      <p className="text-xs text-gray-500 mb-1">Suma</p>
+                        <p className="text-xs text-gray-500 dark:text-slate-400 mb-1">Suma</p>
                       <p className="text-lg font-bold" style={{ color: GREEN }}>{formatMoney(total_all_time)}</p>
                     </div>
                   </div>
@@ -192,17 +192,17 @@ export default function Dashboard({ user }) {
           })()}
         </Card>
 
-        {/* Bar Chart */}
-        <div className="bg-white rounded-xl shadow-sm p-5 hover:shadow-md transition-shadow">
+                  {/* Bar Chart */}
+        <div className="bg-white dark:bg-slate-800 rounded-xl shadow-sm p-5 hover:shadow-md transition-shadow">
           <div className="flex items-center justify-between mb-4">
-            <h3 className="text-base font-bold">Wydatki w czasie</h3>
+            <h3 className="text-base font-bold text-gray-800 dark:text-slate-200">Wydatki w czasie</h3>
             <div className="flex items-center gap-2">
-              <span className="text-xs text-gray-500 whitespace-nowrap">Suma: {formatMoney(getBarChartData().reduce((s,d)=>s+(d.actual||0), 0))}</span>
+            <span className="text-xs text-gray-500 dark:text-slate-400 whitespace-nowrap">Suma: {formatMoney(getBarChartData().reduce((s,d)=>s+(d.actual||0), 0))}</span>
               {['3m', '6m', '12m', 'all'].map((opt) => (
                 <button
                   key={opt}
                   onClick={() => setTimeFilter(opt)}
-                  className={`px-3 py-1 rounded-md text-xs font-semibold transition-colors ${timeFilter === opt ? 'bg-[#32a852] text-white' : 'bg-gray-200 text-gray-600 hover:bg-gray-300'}`}
+                  className={`px-3 py-1 rounded-md text-xs font-semibold transition-colors ${timeFilter === opt ? 'bg-[#32a852] text-white' : 'bg-gray-200 dark:bg-slate-700 text-gray-600 dark:text-slate-300 hover:bg-gray-300 dark:hover:bg-slate-600'}`}
                 >
                   {opt}
                 </button>
@@ -211,7 +211,7 @@ export default function Dashboard({ user }) {
           </div>
 
           {!monthly_history || monthly_history.length === 0 ? (
-            <p className="text-center text-gray-400 py-12">Brak danych miesięcznych.</p>
+           <p className="text-center text-gray-400 dark:text-slate-500 py-12">Brak danych miesięcznych.</p>
           ) : (
             <ResponsiveContainer width={550} height={340}>
               <BarChart data={getBarChartData()} margin={{ top: 10, right: 20, left: 10, bottom: 10 }}>
@@ -234,7 +234,7 @@ export default function Dashboard({ user }) {
       {/* Category Budget Progress */}
       <Card title="Budżet kategorii">
         {catBudgets.length === 0 ? (
-          <p className="text-center text-gray-400 py-8">Brak danych budżetowych dla tego miesiąca.</p>
+        <p className="text-center text-gray-400 dark:text-slate-500 py-8">Brak danych budżetowych dla tego miesiąca.</p>
         ) : (
           <div className="space-y-4 max-h-[500px] overflow-y-auto pr-2 custom-scrollbar">
             {catBudgets.map((c, idx) => (
@@ -262,8 +262,8 @@ export default function Dashboard({ user }) {
 
 function Card({ title, children }) {
   return (
-    <div className="bg-white rounded-xl shadow-sm p-5 hover:shadow-md transition-shadow">
-      <h3 className={`text-base font-bold mb-4`}>{title}</h3>
+   <div className="bg-white dark:bg-slate-800 rounded-xl shadow-sm p-5 hover:shadow-md transition-shadow">
+      <h3 className={`text-base font-bold mb-4 text-gray-800 dark:text-slate-200`}>{title}</h3>
       {children}
     </div>
   );
@@ -271,14 +271,15 @@ function Card({ title, children }) {
 
 function StatCard({ label, value, icon, color, badge }) {
   return (
-    <div className="bg-white rounded-xl shadow-sm hover:shadow-md transition-shadow p-5 relative overflow-hidden">
-      {badge && <span className="absolute top-3 right-4 text-xs font-medium bg-gray-100 text-gray-600 px-2 py-0.5 rounded-full">{badge}</span>}
+   <div className="bg-white dark:bg-slate-800 rounded-xl shadow-sm hover:shadow-md transition-shadow p-5 relative overflow-hidden">
+      {badge && <span className="absolute top-3 right-4 text-xs font-medium bg-gray-100 dark:bg-slate-700 text-gray-600 dark:text-slate-300 px-2 py-0.5 rounded-full">{badge}</span>}
       <div className="flex items-center gap-3 mb-3">
         <div style={{ backgroundColor: color + '20' }} className="w-10 h-10 rounded-lg flex items-center justify-center shrink-0">
           {icon}
         </div>
-        <span className="text-sm font-medium text-gray-600">{label}</span>
+        <span className="text-sm font-medium text-gray-600 dark:text-slate-400">{label}</span>
       </div>
+
       <p className={`text-2xl font-bold`} style={{ color }}>{formatMoney(value)}</p>
     </div>
   );
@@ -287,29 +288,38 @@ function StatCard({ label, value, icon, color, badge }) {
 function CategoryRow({ cat }) {
   const wydatki = cat.expenditure || 0;
   const budzet = cat.budget || 0;
+  
   const balance = cat.balance !== undefined ? cat.balance : (budzet - wydatki);
-  const pct = budzet > 0 ? Math.min(100, (wydatki / budzet) * 100) : 0;
+
+  const rawPct = budzet > 0 
+    ? Math.max(5, (wydatki / budzet) * 100) 
+    : (wydatki > 0 ? 5 : 0);
 
   return (
-    <div className="border-b border-gray-100 pb-3">
+    <div className="border-b border-gray-100 dark:border-slate-700 pb-3">
       <div className="flex items-center justify-between mb-2" style={{ flexWrap: 'wrap', gap: '8px' }}>
         <div className="flex items-center gap-3">
-          <span style={{ backgroundColor: cat.color || '#94a3b8' }} className="w-4 h-4 rounded-full shrink-0 shadow-sm border border-gray-100" />
-          <span className="font-medium text-gray-800">{cat.name}</span>
+          <span style={{ backgroundColor: cat.color || '#94a3b8' }} className="w-4 h-4 rounded-full shrink-0 shadow-sm border border-gray-100 dark:border-slate-600" />
+          <span className="font-medium text-gray-800 dark:text-slate-200">{cat.name}</span>
         </div>
         <div className="text-right">
           {budzet > 0 && (
-            <p className={`text-xs text-gray-500`}>{wydatki.toFixed(2)} / {budzet} zł</p>
+            <p className={`text-xs ${isDark ? 'text-slate-400' : 'text-gray-500'}`}>{wydatki.toFixed(2)} / {budzet} zł</p>
           )}
           <span style={{ color: balance >= 0 ? GREEN : '#dc2626' }} className="text-sm font-bold">
             {(balance > 0 ? '+' : '')}{formatMoney(balance)}
           </span>
         </div>
       </div>
+
       {budzet > 0 && (
-        <div className="w-full h-3 bg-gray-100 rounded-full overflow-hidden shadow-inner">
+        <div className="w-full h-3 bg-gray-200 dark:bg-slate-700 rounded-full overflow-hidden relative"> 
+           {/* 'overflow-hidden' na rodzicu sprawia, że pasek szerokości >100% po prostu zniknie za krawędzią */}
           <div
-            style={{ width: `${pct}%`, backgroundColor: pct > 100 ? '#ef4444' : cat.color || '#3b82f6' }}
+            style={{ 
+              width: `${rawPct}%`,
+              backgroundColor: wydatki > budzet ? '#ef4444' : (cat.color || '#3b82f6') 
+            }}
             className="h-full rounded-full transition-all duration-700"
           />
         </div>
@@ -332,7 +342,7 @@ function formatMoney(v) {
 function CustomTooltip({ active, payload }) {
   if (!active || !payload?.length) return null;
   return (
-    <div className="bg-white border shadow-md p-3 rounded-lg">
+    <div className="bg-white dark:bg-slate-800 border dark:border-slate-700 shadow-md p-3 rounded-lg">
       {payload.map((p) => {
         const val = Number(p.value).toLocaleString('pl-PL', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
         return (
@@ -351,7 +361,7 @@ function CustomBarTooltip({ active, payload }) {
   const d = payload[0].payload;
   const seenNames = new Set();
   return (
-    <div className="bg-white border shadow-md p-3 rounded-lg max-w-[240px]">
+     <div className="bg-white dark:bg-slate-800 border dark:border-slate-700 shadow-md p-3 rounded-lg max-w-[240px]">
       {d.label && <p style={{ fontSize:'13px', fontWeight:700, marginBottom:'6px' }}>{d.label}</p>}
       {payload.map((e) => {
         const val = Number(e.value).toLocaleString('pl-PL', { minimumFractionDigits: 2, maximumFractionDigits: 2 });

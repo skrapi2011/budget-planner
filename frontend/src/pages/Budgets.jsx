@@ -107,6 +107,8 @@ export default function Budzety({ user }) {
 
   const hasMissingCategory = categories.some(c => !budgets.find(b => b.category_id === c.id));
 
+  const categoriesLoaded = categories.length > 0;
+
   return (
     <Layout username={user}>
       {loading ? (
@@ -160,8 +162,8 @@ export default function Budzety({ user }) {
                   <>
                     <p className="text-3xl font-bold text-[#32a852]">{(totalBudget - totalSpent).toFixed(2)} PLN</p>
                     {totalBudget > 0 && (
-                      <div className="mt-2 w-full bg-gray-200 rounded-full h-2">
-                        <div style={{ width: `${Math.round(((totalBudget - totalSpent) / totalBudget) * 100)}%` }} className="bg-[#32a852] h-2 rounded-full transition-all duration-500" />
+                      <div className="mt-2 w-full bg-gray-200 rounded-full h-2 overflow-hidden">
+                        <div style={{ width: `${Math.max(Math.round(((totalBudget - totalSpent) / totalBudget) * 100), (totalSpent > 0 ? 5 : 0))}%` }} className="bg-[#32a852] h-2 rounded-full transition-all duration-500" />
                       </div>
                     )}
                   </>
@@ -243,8 +245,8 @@ export default function Budzety({ user }) {
                     <div className="px-5 py-4 pt-3">
                       {limit > 0 ? (
                         <>
-                          <div className="w-full bg-gray-100 rounded-full h-3 overflow-hidden">
-                            <div style={{ width: `${pct}%` }} className={`h-3 rounded-full transition-all duration-700 ${statusInfo.bg}`} />
+                          <div className="w-full bg-gray-200 rounded-full h-3 overflow-hidden">
+                            <div style={{ width: `${Math.max(pct, spent > 0 ? 5 : 0)}%` }} className={`h-3 rounded-full transition-all duration-700 ${statusInfo.bg}`} />
                           </div>
                           <div className="flex justify-between mt-2">
                             <span className="text-xs text-gray-400 font-medium">{spent.toFixed(2)} PLN wydane</span>
@@ -262,15 +264,15 @@ export default function Budzety({ user }) {
                       {limit > 0 ? (
                         <div className="flex items-center gap-2 mt-3 pt-3 border-t border-gray-50">
                           <span className="text-xs text-gray-400 font-medium whitespace-nowrap">Budżet:</span>
-          <input
-                             type="number"
-                             min="0.01"
-                             step="0.01"
-                             value={editingBudgets['cat_' + bud.cat_id] ?? limit}
-                             onChange={(e) => setEditingBudgets(prev => ({ ...prev, ['cat_' + bud.cat_id]: parseFloat(e.target.value) || 0 }))}
-                            onKeyDown={(e) => { if (e.key === 'Enter') handleSaveInline(bud.id, 'cat_' + bud.cat_id); }}
-                                                        className="w-28 px-3 py-1.5 bg-gray-50 border border-gray-200 rounded-lg text-sm font-semibold text-gray-700 outline-none focus:border-[#32a852] focus:ring-1 focus:ring-green-100 transition-all tabular-nums"
-                                                      />
+                           <input
+                              type="text"
+                              inputMode="numeric"
+                              pattern="[0-9]*"
+                              value={editingBudgets['cat_' + bud.cat_id] ?? ''}
+                              onChange={(e) => { const v = e.target.value.replace(/[^0-9.]/g, ''); setEditingBudgets(prev => ({ ...prev, ['cat_' + bud.cat_id]: parseFloat(v || '') })) }}
+                             onKeyDown={(e) => { if (e.key === 'Enter') handleSaveInline(bud.id, 'cat_' + bud.cat_id); }}
+                                                       className="w-28 px-3 py-1.5 bg-gray-50 border border-gray-200 rounded-lg text-sm font-semibold text-gray-700 outline-none focus:border-[#32a852] focus:ring-1 focus:ring-green-100 transition-all tabular-nums"
+                                                       />
                                                       <span className="text-xs text-gray-400">PLN</span>
                                {editingBudgets['cat_' + bud.cat_id] !== originalValues['cat_' + bud.cat_id] && (
                                         <>
@@ -300,6 +302,7 @@ export default function Budzety({ user }) {
             <AddBudgetModal
               monthStr={monthStr}
               categories={categories.filter(c => !budgets.find(b => b.category_id === c.id))}
+              categoriesLoaded={categoriesLoaded}
               onClose={() => setShowModal(false)}
               onAdded={() => loadBudgets(monthStr)}
             />

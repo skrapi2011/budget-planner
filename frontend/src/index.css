@@ -1,9 +1,15 @@
 @import "tailwindcss";
 
+@custom-variant dark (&:is(.dark *));
+
 body {
   margin: 0;
   font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
   background-color: #f3f4f6;
+}
+
+.dark body {
+  background-color: #0B1120;
 }
 
 ::-webkit-scrollbar {
@@ -16,6 +22,14 @@ body {
   background: #c0c0c0;
   border-radius: 3px;
 }
+
+.dark ::-webkit-scrollbar-track {
+  background: #1e293b;
+}
+.dark ::-webkit-scrollbar-thumb {
+  background: #475569;
+  border-radius: 3px;
+}
 .no-scrollbar::-webkit-scrollbar {
   display: none;
 }
@@ -25,4 +39,24 @@ body {
 }
 .modal-content {
   transition: transform 0.2s ease-in-out, opacity 0.2s ease-in-out;
+}
+
+*, :before, :after {
+  box-sizing: border-box;
+}
+
+body, button, a {
+  cursor: default;
+}
+
+input[type="number"],
+input[type="text"] {
+  cursor: text;
+}
+
+button:not(:disabled),
+a[href],
+[onclick],
+[role="button"] {
+  cursor: pointer;
 }
