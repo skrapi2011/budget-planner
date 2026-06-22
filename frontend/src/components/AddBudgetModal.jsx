@@ -7,19 +7,24 @@ export default function AddBudgetModal({ monthStr, categories, onClose, onAdded 
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState(null);
   const [fallbackCategories, setFallbackCategories] = useState([]);
+  const [catsLoading, setCatsLoading] = useState(false);
   const hasFetchedRef = useRef(false);
 
-  // Use fallback categories only when the prop is not provided (race condition guard)
-  const effectiveCats = categories !== undefined ? categories : fallbackCategories;
+  // Use fallback categories when prop is missing/empty (race condition guard)
+  const hasPropCats = Array.isArray(categories) && categories.length > 0;
+  const effectiveCats = hasPropCats ? categories : fallbackCategories;
 
   useEffect(() => {
-    if (categories === undefined && !hasFetchedRef.current && fallbackCategories.length === 0) {
-      hasFetchedRef.current = true;
-      api.getCategories(true)
-        .then(cats => setFallbackCategories(cats || []))
-        .catch(() => setError('Nie udało się załadować kategorii. Sprawdź połączenie z internetem.'))
-    }
-  }, [categories, fallbackCategories.length]);
+    const needsFetch = !Array.isArray(categories) || categories.length === 0;
+    if (!needsFetch || hasFetchedRef.current) return;
+
+    hasFetchedRef.current = true;
+    setCatsLoading(true);
+    api.getCategories(true)
+      .then((cats) => setFallbackCategories(cats || []))
+      .catch(() => setError('Nie udało się załadować kategorii. Sprawdź połączenie z internetem.'))
+      .finally(() => setCatsLoading(false));
+  }, [categories]);
 
   // when categories load, auto-select if none selected yet
   useEffect(() => {
@@ -71,7 +76,7 @@ export default function AddBudgetModal({ monthStr, categories, onClose, onAdded 
           <div>
             <label className="block text-sm font-medium text-gray-600 mb-1.5">Kategoria</label>
             {effectiveCats.length === 0 ? (
-              categories === undefined ? (
+              catsLoading ? (
                 <div className="flex items-center justify-center py-8">
                   <div className="w-5 h-5 border-2 border-gray-300 border-t-green-600 rounded-full animate-spin" />
                 </div>
