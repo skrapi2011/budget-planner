@@ -9,12 +9,11 @@ export default function AddBudgetModal({ monthStr, categories, onClose, onAdded 
   const [fallbackCategories, setFallbackCategories] = useState([]);
   const hasFetchedRef = useRef(false);
 
-  // Use fallback categories if prop is empty (race condition guard)
-  const effectiveCats = categories && categories.length > 0 ? categories : fallbackCategories;
-
+  // Use fallback categories only when the prop is not provided (race condition guard)
+  const effectiveCats = categories !== undefined ? categories : fallbackCategories;
 
   useEffect(() => {
-    if ((categories === undefined || categories.length === 0) && !hasFetchedRef.current && fallbackCategories.length === 0) {
+    if (categories === undefined && !hasFetchedRef.current && fallbackCategories.length === 0) {
       hasFetchedRef.current = true;
       api.getCategories(true)
         .then(cats => setFallbackCategories(cats || []))
