@@ -33,16 +33,22 @@ export default function RegisterPage() {
 
   if (success) {
     return (
-      <div className="min-h-screen flex items-center justify-center bg-gradient-to-br from-green-50 to-emerald-100">
-        <div className="w-full max-w-sm p-8 m-auto bg-white rounded-lg shadow-md text-center">
+      <div className="min-h-screen flex items-center justify-center bg-gradient-to-br from-green-50 to-emerald-100 dark:from-slate-900 dark:to-slate-800">
+        <div className="w-full max-w-sm p-8 m-auto bg-white rounded-lg shadow-md text-center dark:bg-slate-800 dark:border dark:border-slate-700">
           <svg className="mx-auto mb-4 w-16 h-16 text-[#32a852]" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z"/></svg>
 
-          <h1 className="text-xl font-bold text-gray-900 mb-2">Rejestracja udana!</h1>
-          <p className="text-sm text-gray-600 mb-4">Twoje konto zostało utworzone pomyślnie.</p>
-          <button onClick={() => navigate('/login')} className="px-4 py-2 text-sm font-medium rounded-md text-white bg-[#32a852] hover:bg-[#1f8c42] transition-colors w-full">Przejdź do logowania</button>
+          <h1 className="text-xl font-bold text-gray-900 mb-2 dark:text-white">Rejestracja udana!</h1>
+          <p className="text-sm text-gray-600 mb-4 dark:text-slate-300">Twoje konto zostało utworzone pomyślnie.</p>
+          
+          <button 
+            onClick={() => navigate('/login')} 
+            className="w-full px-4 py-2 text-sm font-medium rounded-md shadow-sm text-white bg-[#32a852] hover:bg-[#1f8c42] transition-colors"
+          >
+            Przejdź do logowania
+          </button>
         </div>
       </div>
-    ); }
+    ); 
   }
 
   return (
