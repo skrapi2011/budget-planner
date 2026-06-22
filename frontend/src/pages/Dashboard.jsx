@@ -288,8 +288,12 @@ function StatCard({ label, value, icon, color, badge }) {
 function CategoryRow({ cat }) {
   const wydatki = cat.expenditure || 0;
   const budzet = cat.budget || 0;
+  
   const balance = cat.balance !== undefined ? cat.balance : (budzet - wydatki);
-  const pct = budzet > 0 ? Math.min(100, (wydatki / budzet) * 100) : 0;
+
+  const rawPct = budzet > 0 
+    ? Math.max(5, (wydatki / budzet) * 100) 
+    : (wydatki > 0 ? 5 : 0);
 
   return (
     <div className="border-b border-gray-100 dark:border-slate-700 pb-3">
@@ -300,17 +304,22 @@ function CategoryRow({ cat }) {
         </div>
         <div className="text-right">
           {budzet > 0 && (
-            <p className={`text-xs text-gray-500 dark:text-slate-400`}>{wydatki.toFixed(2)} / {budzet} zł</p>
+            <p className={`text-xs ${isDark ? 'text-slate-400' : 'text-gray-500'}`}>{wydatki.toFixed(2)} / {budzet} zł</p>
           )}
           <span style={{ color: balance >= 0 ? GREEN : '#dc2626' }} className="text-sm font-bold">
             {(balance > 0 ? '+' : '')}{formatMoney(balance)}
           </span>
         </div>
       </div>
+
       {budzet > 0 && (
-        <div className="w-full h-3 bg-gray-200 dark:bg-slate-700 rounded-full overflow-hidden">
+        <div className="w-full h-3 bg-gray-200 dark:bg-slate-700 rounded-full overflow-hidden relative"> 
+           {/* 'overflow-hidden' na rodzicu sprawia, że pasek szerokości >100% po prostu zniknie za krawędzią */}
           <div
-            style={{ width: `${Math.max(pct, wydatki > 0 ? 5 : 0)}%`, backgroundColor: pct > 100 ? '#ef4444' : cat.color || '#3b82f6' }}
+            style={{ 
+              width: `${rawPct}%`,
+              backgroundColor: wydatki > budzet ? '#ef4444' : (cat.color || '#3b82f6') 
+            }}
             className="h-full rounded-full transition-all duration-700"
           />
         </div>
