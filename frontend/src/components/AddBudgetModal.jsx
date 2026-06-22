@@ -46,7 +46,6 @@ export default function AddBudgetModal({ monthStr, categories, onClose, onAdded 
         });
         onAdded();
         onClose();
-      onClose();
     } catch (err) {
       setError(err.message || 'Nie udało się dodać budżetu');
     } finally {
