@@ -45,8 +45,13 @@ body {
   box-sizing: border-box;
 }
 
-body, button, a, input[type="number"], input[type="text"] {
+body, button, a {
   cursor: default;
+}
+
+input[type="number"],
+input[type="text"] {
+  cursor: text;
 }
 
 button:not(:disabled),
