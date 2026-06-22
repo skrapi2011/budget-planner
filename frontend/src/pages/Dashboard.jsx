@@ -1,4 +1,16 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useMemo } from 'react';
+
+let darkMQ = typeof window !== 'undefined' ? window.matchMedia('(prefers-color-scheme: dark)') : null;
+function useDark() {
+  const [dark, setDark] = useState(darkMQ?.matches ?? false);
+  useEffect(() => {
+    if (!darkMQ) return;
+    const handler = (e) => setDark(e.matches);
+    darkMQ.addEventListener('change', handler);
+    return () => darkMQ.removeEventListener('change', handler);
+  }, []);
+  return dark || false;
+}
 import Layout from '../components/Layout';
 import ModalDodajWydatek from '../components/ModalDodajWydatek';
 import * as api from '../api';
@@ -29,6 +41,7 @@ export default function Dashboard({ user }) {
   const [catBudgets, setCatBudgets] = useState([]);
   // Active categories for modal dropdown
   const [activeCategories, setActiveCategories] = useState([]);
+  const isDark = useDark();
 
   useEffect(() => { loadDashboard(); }, [monthStr]);
 
@@ -238,7 +251,7 @@ export default function Dashboard({ user }) {
         ) : (
           <div className="space-y-4 max-h-[500px] overflow-y-auto pr-2 custom-scrollbar">
             {catBudgets.map((c, idx) => (
-              <CategoryRow key={idx} cat={c} />
+              <CategoryRow key={idx} cat={c} isDark={isDark} />
             ))}
           </div>
         )}
@@ -285,7 +298,7 @@ function StatCard({ label, value, icon, color, badge }) {
   );
 }
 
-function CategoryRow({ cat }) {
+function CategoryRow({ cat, isDark }) {
   const wydatki = cat.expenditure || 0;
   const budzet = cat.budget || 0;
   
