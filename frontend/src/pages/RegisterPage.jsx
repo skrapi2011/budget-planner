@@ -81,4 +81,4 @@ export default function RegisterPage() {
         <p className="mt-4 text-xs text-center text-gray-400 dark:text-slate-500">Masz już konto?{' '}<button onClick={() => navigate('/login')} className="text-[#32a852] hover:underline font-medium">Zaloguj się</button></p>
       </div>
     </div>
-  ); }
+  );
