@@ -4,11 +4,19 @@ import * as api from '../api';
 import AddBudgetModal from '../components/AddBudgetModal';
 import { currentMonthStr } from '../utils/date';
 import { useAnimatedValue, useCountUp } from '../hooks/animation';
+import { useToast } from '../components/ToastContext';
 
 const MONTH_NAMES = [
   'Styczeń', 'Luty', 'Marzec', 'Kwiecień', 'Maj', 'Czerwiec',
   'Lipiec', 'Sierpień', 'Wrzesień', 'Październik', 'Listopad', 'Grudzień'
 ];
+
+// Inline edycja trzyma w stanie CIĄG (to, co user wpisuje) — parseFloat('') daje NaN,
+// który lądował w value={...} i input wyświetlał literalne „NaN" (audit P0-16).
+const parseAmt = (v) => {
+  const n = parseFloat(v);
+  return Number.isFinite(n) ? n : null;
+};
 
 const getBarStatus = (status, pct) => {
   if ((status === 'over_budget' || status === 'przekroczony') || pct >= 100) return { bg: 'bg-red-500', label: 'Przekroczony', color: 'text-red-600' };
@@ -37,6 +45,7 @@ function AnimatedBar({ pct, className = '' }) {
 }
 
 export default function Budzety({ user }) {
+  const { success, error: toastError } = useToast();
   const [budgets, setBudgets] = useState([]);
   const [loading, setLoading] = useState(true);
   const [hasLoaded, setHasLoaded] = useState(false);
@@ -69,7 +78,7 @@ export default function Budzety({ user }) {
       if (data?.length > 0) {
         const edits = {};
         const orig = {};
-        data.forEach(b => { const k = 'cat_' + b.cat_id; edits[k] = Number(b.budzet); orig[k] = Number(b.budzet); });
+        data.forEach(b => { const k = 'cat_' + b.cat_id; const n = Number(b.budzet); edits[k] = String(n); orig[k] = n; });
         setEditingBudgets(edits);
         setOriginalValues(orig);
       } else {
@@ -110,8 +119,9 @@ export default function Budzety({ user }) {
   const animatedRemaining = useCountUp(remaining);
 
  const handleSaveInline = async (bud, catKey) => {
-      const amt = editingBudgets[catKey];
-       if (!amt || amt <= 0) return;
+      const amt = parseAmt(editingBudgets[catKey]);
+       if (amt === null) { toastError('Podaj poprawną kwotę'); return; }
+      if (amt < 0) { toastError('Kwota musi być dodatnia'); return; }
       setSavingId(bud.id || bud.cat_id);
      try {
        if (bud.id !== null && bud.id !== undefined) {
@@ -120,7 +130,10 @@ export default function Budzety({ user }) {
          await api.createBudget({ category_id: Number(bud.category_id), amount_monthly: amt, month_year: monthStr });
        }
        await loadBudgets(monthStr);
-     } catch { /* save failed */ } finally {
+       success('Budżet zapisany');
+     } catch (err) {
+       toastError(err.message || 'Nie udało się zapisać budżetu');
+     } finally {
        setSavingId(null);
      }
    };
@@ -301,17 +314,17 @@ export default function Budzety({ user }) {
                               inputMode="numeric"
                               pattern="[0-9]*"
                               value={editingBudgets['cat_' + bud.cat_id] ?? ''}
-                              onChange={(e) => { const v = e.target.value.replace(/[^0-9.]/g, ''); setEditingBudgets(prev => ({ ...prev, ['cat_' + bud.cat_id]: parseFloat(v || '') })) }}
+                              onChange={(e) => { const v = e.target.value.replace(/[^0-9.]/g, ''); setEditingBudgets(prev => ({ ...prev, ['cat_' + bud.cat_id]: v })) }}
                              onKeyDown={(e) => { if (e.key === 'Enter') handleSaveInline(bud, 'cat_' + bud.cat_id); }}
                                                         className="w-28 px-3 py-1.5 bg-gray-50 dark:bg-slate-700 border border-gray-200 dark:border-slate-600 rounded-lg text-sm font-semibold text-gray-700 dark:text-slate-200 outline-none focus:border-[#32a852] focus:ring-1 focus:ring-green-100 dark:focus:ring-green-900/30 transition-all tabular-nums"
                                                         />
                                                        <span className="text-xs text-gray-400 dark:text-slate-400">PLN</span>
-                                               {editingBudgets['cat_' + bud.cat_id] !== originalValues['cat_' + bud.cat_id] && (
+                                               {parseAmt(editingBudgets['cat_' + bud.cat_id]) !== originalValues['cat_' + bud.cat_id] && (
                                                 <>
                                                   <button onClick={() => handleSaveInline(bud, 'cat_' + bud.cat_id)} disabled={savingId === (bud.id || bud.cat_id)} className="px-3 py-1.5 rounded-lg text-xs font-semibold bg-[#32a852] hover:bg-[#1f8c42] dark:bg-green-600 dark:hover:bg-green-700 text-white transition-colors shadow-sm disabled:opacity-50">
                                                     {savingId === (bud.id || bud.cat_id) ? 'Zapisuję…' : 'Zapisz'}
                                                   </button>
-                                                  <button onClick={() => setEditingBudgets(prev => ({ ...prev, ['cat_' + bud.cat_id]: originalValues['cat_' + bud.cat_id] }))} className="px-3 py-1.5 rounded-lg text-xs font-semibold bg-gray-200 hover:bg-gray-300 dark:bg-slate-700 dark:hover:bg-slate-600 text-gray-600 dark:text-slate-300 transition-colors">
+                                                  <button onClick={() => setEditingBudgets(prev => ({ ...prev, ['cat_' + bud.cat_id]: String(originalValues['cat_' + bud.cat_id]) }))} className="px-3 py-1.5 rounded-lg text-xs font-semibold bg-gray-200 hover:bg-gray-300 dark:bg-slate-700 dark:hover:bg-slate-600 text-gray-600 dark:text-slate-300 transition-colors">
                                                     Anuluj
                                                   </button>
             </>

@@ -109,6 +109,32 @@ def month_window(year, mon):
     return first, f"{nxt.year}-{nxt.month:02d}-01"
 
 
+def normalize_tags(raw):
+    """Return a JSON-array string for Transactions.tags, or None if the value is unusable.
+
+    The column is read back with SQLite's json_each() in /api/tags/all, so one non-JSON
+    value breaks the Tags tab for that user permanently (audit P0-12: PUT with
+    {"tags":"not json"} returned 201 and then GET /api/tags/all 500'd forever).
+    Validate at the write boundary.
+    """
+    if raw is None:
+        return "[]"
+    if isinstance(raw, str):
+        s = raw.strip()
+        if not s:
+            return "[]"
+        try:
+            parsed = json.loads(s)
+        except Exception:
+            return None
+        if not isinstance(parsed, list):
+            return None
+        return json.dumps([str(x) for x in parsed])
+    if isinstance(raw, list):
+        return json.dumps([str(x) for x in raw])
+    return None
+
+
 def seed_categories(conn):
     _seed_categories_for_user(conn, 1)
 
@@ -760,7 +786,7 @@ def get_transactions():
 
     conn = get_connection()
     try:
-        query_text = """SELECT t.*, c.name AS category_name, c.color, c.icon
+        query_text = """SELECT t.*, c.name AS category_name, c.color AS category_color, c.icon AS category_icon
                    FROM Transactions t
                    JOIN Categories c ON c.id=t.category_id
                    WHERE t.user_id=? AND t.date>=? AND t.date<?"""
@@ -837,12 +863,9 @@ def create_transaction():
     description = data.get("description") or ""
 
     tags_raw = data.get("tags", [])
-    if isinstance(tags_raw, list):
-        tags_json_val = json.dumps(tags_raw)
-    elif isinstance(tags_raw, str):
-        tags_json_val = tags_raw
-    else:
-        tags_json_val = "[]"
+    tags_json_val = normalize_tags(tags_raw)
+    if tags_json_val is None:
+        return jsonify({"error": "tags must be a JSON array of strings"}), 400
 
     conn = get_connection()
     try:
@@ -933,13 +956,9 @@ def update_transaction(tid):
             params_final.append(data["description"])
 
         if "tags" in data:
-            tj = data["tags"]
-            if isinstance(tj, list):
-                tags_json_val = json.dumps(tj)
-            elif isinstance(tj, str):
-                tags_json_val = tj
-            else:
-                tags_json_val = "[]"
+            tags_json_val = normalize_tags(data["tags"])
+            if tags_json_val is None:
+                return jsonify({"error": "tags must be a JSON array of strings"}), 400
             set_parts.append("tags=?")
             params_final.append(tags_json_val)
 
@@ -1022,12 +1041,27 @@ def recent_transactions():
 def get_all_tags():
     conn = get_connection()
     try:
-        rows = conn.execute(
-            """SELECT DISTINCT json_each.value AS tag_name
-               FROM Transactions, json_each(Transactions.tags)
-               WHERE Transactions.user_id=?""",
-            (g.current_user_id,),
-        ).fetchall()
+        try:
+            rows = conn.execute(
+                """SELECT DISTINCT json_each.value AS tag_name
+                   FROM Transactions, json_each(Transactions.tags)
+                   WHERE Transactions.user_id=?""",
+                (g.current_user_id,),
+            ).fetchall()
+        except sqlite3.OperationalError:
+            # A legacy row holds a non-JSON `tags` value: json_each() aborts the whole scan,
+            # which used to break the Tags tab permanently (audit P0-12). Parse in Python
+            # and skip the bad row.
+            rows = []
+            for r in conn.execute(
+                "SELECT tags FROM Transactions WHERE user_id=?", (g.current_user_id,)
+            ).fetchall():
+                try:
+                    arr = json.loads(r["tags"])
+                except Exception:
+                    continue
+                if isinstance(arr, list):
+                    rows.extend([{"tag_name": str(x)} for x in arr])
         tags_list = [row["tag_name"] for row in rows if row["tag_name"]]
         return jsonify(tags_list), 200
     finally:

@@ -7,6 +7,10 @@ DB_PATH = os.path.join(APP_ROOT, 'data', 'baza.db')
 
 
 def get_connection():
+    # A fresh clone has no backend/data/ at all (.gitignore lists it, and the
+    # `!backend/data/.gitkeep` exception had no matching file), so sqlite3 answered
+    # "unable to open database file" and the app did not start (audit P0-13).
+    os.makedirs(os.path.dirname(DB_PATH), exist_ok=True)
     conn = sqlite3.connect(DB_PATH)
     conn.row_factory = sqlite3.Row
     conn.execute("PRAGMA foreign_keys = ON")

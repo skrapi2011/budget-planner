@@ -3,7 +3,8 @@ import Layout from '../components/Layout';
 import { useToast } from '../components/ToastContext';
 import * as api from '../api';
 
-const ICON_OPTIONS = '\u{1F3C9}\u{1F697}\u{1F3E0}\u{1F3AE}\u{1F48A}\u{1F4DA}\u{1F455}\u{1F4F1}\u{1F3E1}\u{1F381}\u{1F6C6}\u{1F3AF}\u{1F4B0}\u{1F527}'.split('');
+// Spread, nie split(''): split tnie pary surrogate i daje 28 polow glifow zamiast 14 emoji.
+const ICON_OPTIONS = [...'\u{1F3C9}\u{1F697}\u{1F3E0}\u{1F3AE}\u{1F48A}\u{1F4DA}\u{1F455}\u{1F4F1}\u{1F3E1}\u{1F381}\u{1F6C6}\u{1F3AF}\u{1F4B0}\u{1F527}'];
 
 export default function CategoriesView({ user }) {
   const { success, error: toastError, confirm } = useToast();
