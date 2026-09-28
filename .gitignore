@@ -38,6 +38,9 @@ backend/data/baza.db
 backend/data/*.db
 !backend/data/.gitkeep
 
+# pi session artifacts
+backend/.pi/
+
 # IDE
 .idea/
 .vscode/
