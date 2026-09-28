@@ -2,6 +2,7 @@ import { BrowserRouter, Routes, Route, Navigate, useNavigate, useLocation } from
 import { lazy, Suspense, useEffect } from 'react';
 import { AuthProvider, useAuth } from './AuthContext';
 import { ThemeProvider } from './ThemeContext';
+import ToastProvider from './components/ToastProvider';
 import * as api from './api';
 
 const LoginPage = lazy(() => import('./pages/LoginPage'));
@@ -141,7 +142,9 @@ export default function App() {
     <ThemeProvider>
       <BrowserRouter>
         <AuthProvider>
-          <AppRoutes />
+          <ToastProvider>
+            <AppRoutes />
+          </ToastProvider>
         </AuthProvider>
       </BrowserRouter>
     </ThemeProvider>

@@ -60,3 +60,47 @@ a[href],
 [role="button"] {
   cursor: pointer;
 }
+
+/* ---------- Animacje (audyt UI/UX) ---------- */
+@keyframes fade-slide-in {
+  from { opacity: 0; transform: translateY(8px); }
+  to   { opacity: 1; transform: translateY(0); }
+}
+@keyframes toast-in {
+  from { opacity: 0; transform: translateY(-12px) scale(0.97); }
+  to   { opacity: 1; transform: translateY(0) scale(1); }
+}
+@keyframes toast-out {
+  from { opacity: 1; transform: translateY(0) scale(1); }
+  to   { opacity: 0; transform: translateY(-8px) scale(0.97); }
+}
+@keyframes modal-in {
+  from { opacity: 0; transform: scale(0.96) translateY(4px); }
+  to   { opacity: 1; transform: scale(1) translateY(0); }
+}
+@keyframes backdrop-in {
+  from { opacity: 0; }
+  to   { opacity: 1; }
+}
+
+.page-enter       { animation: fade-slide-in 0.3s ease-out both; }
+.toast-enter      { animation: toast-in 0.25s ease-out both; }
+.toast-exit       { animation: toast-out 0.2s ease-in forwards; }
+.modal-panel-in   { animation: modal-in 0.2s ease-out both; }
+.backdrop-in      { animation: backdrop-in 0.2s ease-out both; }
+
+/* Staggered entrance for direct children (cards, stat tiles) */
+.stagger-children > * { animation: fade-slide-in 0.4s ease-out both; }
+.stagger-children > *:nth-child(1) { animation-delay: 0ms; }
+.stagger-children > *:nth-child(2) { animation-delay: 60ms; }
+.stagger-children > *:nth-child(3) { animation-delay: 120ms; }
+.stagger-children > *:nth-child(4) { animation-delay: 180ms; }
+.stagger-children > *:nth-child(5) { animation-delay: 240ms; }
+.stagger-children > *:nth-child(6) { animation-delay: 300ms; }
+
+@media (prefers-reduced-motion: reduce) {
+  .page-enter, .toast-enter, .toast-exit, .modal-panel-in, .backdrop-in,
+  .stagger-children > * {
+    animation: none;
+  }
+}

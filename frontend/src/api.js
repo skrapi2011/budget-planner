@@ -138,6 +138,15 @@ export async function getTransactionsAll() {
   return _fetch('/transactions', { method: 'GET', headers: getHeaders(true) });
 }
 
+// Transactions for a specific month ("YYYY-MM"). Without `month` the backend
+// returns only the current month — that's what getTransactionsAll() is for.
+export async function getTransactions(month) {
+  const params = new URLSearchParams();
+  if (month) params.set('month', month);
+  const qs = params.toString();
+  return _fetch(`/transactions${qs ? `?${qs}` : ''}`, { method: 'GET', headers: getHeaders(true) });
+}
+
 // ---- TAGS ----
 
 export async function getAllTags() {

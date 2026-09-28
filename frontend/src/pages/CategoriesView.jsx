@@ -1,10 +1,12 @@
 import { useState, useEffect } from 'react';
 import Layout from '../components/Layout';
+import { useToast } from '../components/ToastContext';
 import * as api from '../api';
 
 const ICON_OPTIONS = '\u{1F3C9}\u{1F697}\u{1F3E0}\u{1F3AE}\u{1F48A}\u{1F4DA}\u{1F455}\u{1F4F1}\u{1F3E1}\u{1F381}\u{1F6C6}\u{1F3AF}\u{1F4B0}\u{1F527}'.split('');
 
 export default function CategoriesView({ user }) {
+  const { success, error: toastError, confirm } = useToast();
   const [categories, setCategories] = useState([]);
   const [loading, setLoading] = useState(true);
   const [editing, setEditing] = useState(null);
@@ -33,7 +35,8 @@ export default function CategoriesView({ user }) {
       setNewIcon('\u{1F4C1}');
       setShowForm(false);
       loadCategories();
-    } catch (err) { alert(err.message || 'Nie udalo sie dodac kategorii'); }
+      success('Kategoria dodana');
+    } catch (err) { toastError(err.message || 'Nie udało się dodać kategorii'); }
   };
 
   const handleUpdateCategory = async () => {
@@ -41,16 +44,23 @@ export default function CategoriesView({ user }) {
        await api.updateCategory(editing.id, { name: editing.name, color: editing.color, icon: editing.icon, active: editing.active });
        setEditing(null);
        loadCategories();
-     } catch (err) { alert(err.message || 'Nie udalo sie zaktualizowac kategorii'); }
+       success('Zapisano zmiany');
+     } catch (err) { toastError(err.message || 'Nie udało się zaktualizować kategorii'); }
    };
 
   const handleDelete = async () => {
-    if (!editing || !confirm('Usunąć tę kategorię?')) return;
+    if (!editing) return;
+    const ok = await confirm(
+      `Usunąć kategorię „${editing.name}”? Budżety tej kategorii zostaną również usunięte.`,
+      { title: 'Usuń kategorię', confirmLabel: 'Usuń' }
+    );
+    if (!ok) return;
     try {
       await api.deleteCategory(editing.id);
       setEditing(null);
       loadCategories();
-    } catch (err) { alert(err.message || 'Nie udalo sie usunac kategorii'); }
+      success('Kategoria usunięta');
+    } catch (err) { toastError(err.message || 'Nie udało się usunąć kategorii'); }
   };
 
   const handleToggleActive = async () => {
@@ -60,7 +70,7 @@ export default function CategoriesView({ user }) {
       const newActiveValue = editing.active === 0 || editing.active === false ? 1 : 0;
       setEditing({ ...editing, active: newActiveValue });
       setCategories(prev => prev.map(c => c.id === editing.id ? { ...c, active: newActiveValue } : c));
-    } catch (err) { alert(err.message || 'Nie udalo sie zaktualizowac kategorii'); }
+    } catch (err) { toastError(err.message || 'Nie udało się zaktualizować kategorii'); }
   };
 
   const quickSelectIcon = (icon) => setNewIcon(icon);

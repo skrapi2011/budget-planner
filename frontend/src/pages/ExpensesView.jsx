@@ -1,6 +1,8 @@
 import { useState, useEffect } from 'react';
+import { useSearchParams } from 'react-router-dom';
 import Layout from '../components/Layout';
 import AddExpenseModal from '../components/AddExpenseModal';
+import { currentMonthStr } from '../utils/date';
 import * as api from '../api';
 
 const MONTH_NAMES = [
@@ -8,18 +10,25 @@ const MONTH_NAMES = [
   'Lipiec', 'Sierpień', 'Wrzesień', 'Październik', 'Listopad', 'Grudzień'
 ];
 
-function getCurrentMonth() {
-  const now = new Date();
-  return `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}`;
-}
+const fmtMoney = (v) => `${(Number(v) || 0).toLocaleString('pl-PL', { minimumFractionDigits: 2, maximumFractionDigits: 2 })} zł`;
 
  export default function ExpensesView({ user }) {
+  // Deep link: /wydatki?kategoria=<id> (set by the donut chart on the Dashboard).
+  const [searchParams] = useSearchParams();
+  const kategoriaParam = searchParams.get('kategoria');
+
   const [transactions, setTransactions] = useState([]);
   const [categories, setCategories] = useState([]);
   const [loading, setLoading] = useState(true);
   const [modalOpen, setModalOpen] = useState(false);
-  const [monthStr, setMonthStr] = useState(getCurrentMonth());
-  const [selectedCategory, setSelectedCategory] = useState('all');
+  const [hasLoaded, setHasLoaded] = useState(false);
+  // Deep link may also carry the month shown on the Dashboard (?miesiac=YYYY-MM).
+  const miesiacParam = searchParams.get('miesiac');
+  const [monthStr, setMonthStr] = useState(() =>
+    miesiacParam && /^\d{4}-\d{2}$/.test(miesiacParam) ? miesiacParam : currentMonthStr()
+  );
+  // Category picked in the dropdown; null = follow the ?kategoria deep-link param.
+  const [categoryChoice, setCategoryChoice] = useState(null);
   const [searchTerm, setSearchTerm] = useState('');
   const [pendingDeleteId, setPendingDeleteId] = useState(null);
   // Collapsible category sections: map of category id → expanded.
@@ -29,6 +38,15 @@ function getCurrentMonth() {
 
   useEffect(() => { loadExpenses(); }, [monthStr]);
 
+  // Effective category filter: user's dropdown choice wins; otherwise the
+  // ?kategoria deep-link param (validated against loaded categories).
+  const selectedCategory = (() => {
+    const raw = categoryChoice ?? (kategoriaParam && /^\d+$/.test(kategoriaParam) ? kategoriaParam : 'all');
+    if (raw === 'all') return 'all';
+    if (categories.length > 0 && !categories.some(c => String(c.id) === raw)) return 'all';
+    return raw;
+  })();
+
   const toggleCategory = (id) => {
     setExpandedCategories((prev) => ({ ...prev, [id]: !prev[id] }));
   };
@@ -37,7 +55,9 @@ function getCurrentMonth() {
     setLoading(true);
     try {
       const catsPromise = api.getCategories(true).catch(() => []);
-      const txnsPromise = api.getTransactionsAll().catch(() => []);
+      // ⚠️ month parameter is required — without it the backend returns only
+      // the current month, so switching months would show stale data.
+      const txnsPromise = api.getTransactions(monthStr).catch(() => []);
       const [catList, txnList] = await Promise.all([catsPromise, txnsPromise]);
       setCategories(catList || []);
       setTransactions(txnList || []);
@@ -45,6 +65,7 @@ function getCurrentMonth() {
       setTransactions([]);
     } finally {
       setLoading(false);
+      setHasLoaded(true);
     }
   }
 
@@ -86,6 +107,13 @@ function getCurrentMonth() {
            (t.category_name || '').toLowerCase().includes(searchTerm.toLowerCase())
   );
 
+  // Monthly totals (whole month, before category/search filters)
+  const monthTotals = transactions.reduce((acc, t) => {
+    const a = Number(t.amount) || 0;
+    if (t.type === 'Przychod') acc.income += a; else acc.expenses += a;
+    return acc;
+  }, { expenses: 0, income: 0 });
+
   // Group by category
   const grouped = {};
   for (const tx of filteredBySearch) {
@@ -103,22 +131,55 @@ function getCurrentMonth() {
     grouped[tx.category_id].total += Number(tx.amount) || 0;
   }
 
+  const dimmed = loading && hasLoaded;
+
   return (
     <Layout username={user}>
+      <div key={monthStr} className={`page-enter transition-opacity ${dimmed ? 'opacity-50 pointer-events-none' : ''}`}>
       {/* Month navigation */}
       <div className="flex items-center justify-between mb-6">
         <button onClick={prevMonth} className="p-2 rounded-lg bg-white dark:bg-slate-800 shadow-sm hover:bg-gray-50 dark:hover:bg-slate-700 border border-gray-200 dark:border-slate-700 transition-colors" aria-label="poprzedni miesiąc">
           <svg className="w-5 h-5 text-gray-600 dark:text-slate-300" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 19l-7-7 7-7" /></svg>
         </button>
-       <h2 className="text-lg font-semibold text-gray-800 dark:text-slate-200">
-          {MONTH_NAMES[parseInt(monthStr.split('-')[1], 10) - 1]} {monthStr.split('-')[0]}
-        </h2>
+       <div className="flex items-center gap-3">
+         <h2 className="text-lg font-semibold text-gray-800 dark:text-slate-200">
+            {MONTH_NAMES[parseInt(monthStr.split('-')[1], 10) - 1]} {monthStr.split('-')[0]}
+          </h2>
+          <button
+            onClick={() => setMonthStr(currentMonthStr())}
+            className={`text-xs font-semibold px-2 py-1 rounded-md transition-colors ${
+              monthStr === currentMonthStr() ? 'bg-[#32a852]/10 text-[#32a852]' : 'text-[#32a852] hover:bg-[#32a852]/10'
+            }`}
+          >
+            Dziś
+          </button>
+        </div>
         <button onClick={nextMonth} className="p-2 rounded-lg bg-white dark:bg-slate-800 shadow-sm hover:bg-gray-50 dark:hover:bg-slate-700 border border-gray-200 dark:border-slate-700 transition-colors" aria-label="następny miesiąc">
           <svg className="w-5 h-5 text-gray-600 dark:text-slate-300" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5l7 7-7 7" /></svg>
         </button>
       </div>
 
-      {loading ? (
+      {/* Monthly summary */}
+      <div className="mb-4 grid grid-cols-2 sm:grid-cols-4 gap-3 stagger-children">
+        <div className="bg-white dark:bg-slate-800 rounded-lg shadow-sm px-4 py-3">
+          <p className="text-xs text-gray-500 dark:text-slate-400 mb-1">Wydatki</p>
+          <p className="text-lg font-bold text-red-500 dark:text-red-400">{fmtMoney(monthTotals.expenses)}</p>
+        </div>
+        <div className="bg-white dark:bg-slate-800 rounded-lg shadow-sm px-4 py-3">
+          <p className="text-xs text-gray-500 dark:text-slate-400 mb-1">Przychody</p>
+          <p className="text-lg font-bold text-[#32a852]">{fmtMoney(monthTotals.income)}</p>
+        </div>
+        <div className="bg-white dark:bg-slate-800 rounded-lg shadow-sm px-4 py-3">
+          <p className="text-xs text-gray-500 dark:text-slate-400 mb-1">Bilans</p>
+          <p className={`text-lg font-bold ${(monthTotals.income - monthTotals.expenses) >= 0 ? 'text-[#32a852]' : 'text-red-500 dark:text-red-400'}`}>{fmtMoney(monthTotals.income - monthTotals.expenses)}</p>
+        </div>
+        <div className="bg-white dark:bg-slate-800 rounded-lg shadow-sm px-4 py-3">
+          <p className="text-xs text-gray-500 dark:text-slate-400 mb-1">Transakcje</p>
+          <p className="text-lg font-bold text-gray-800 dark:text-slate-200">{transactions.length}</p>
+        </div>
+      </div>
+
+      {loading && !hasLoaded ? (
         <div className="flex items-center justify-center py-16">
           <div className="w-8 h-8 border-4 border-[#32a852]20 border-t-[#32a852] rounded-full animate-spin" />
         </div>
@@ -130,7 +191,7 @@ function getCurrentMonth() {
               Dodaj transakcję
             </button>
 
-            <select value={selectedCategory} onChange={(e) => setSelectedCategory(e.target.value)} className="px-3 py-1.5 rounded-md border border-gray-300 dark:border-slate-600 bg-white dark:bg-slate-700 text-gray-800 dark:text-slate-200 focus:border-[#32a852] focus:ring-[#32a852] sm:text-sm">
+            <select value={selectedCategory} onChange={(e) => setCategoryChoice(e.target.value)} className="px-3 py-1.5 rounded-md border border-gray-300 dark:border-slate-600 bg-white dark:bg-slate-700 text-gray-800 dark:text-slate-200 focus:border-[#32a852] focus:ring-[#32a852] sm:text-sm">
               <option value="all">Wszystkie kategorie</option>
               {categories.map((c) => (
                 <option key={c.id} value={`${c.id}`}>{c.name}</option>
@@ -139,8 +200,6 @@ function getCurrentMonth() {
 
             <input type="text" value={searchTerm} onChange={(e) => setSearchTerm(e.target.value)} placeholder="Szukaj..." className="flex-1 min-w-[200px] px-3 py-1.5 rounded-md border border-gray-300 focus:border-[#32a852] focus:ring-[#32a852] sm:text-sm" />
           </div>
-
-          <AddExpenseModal isOpen={modalOpen} onClose={() => setModalOpen(false)} onSubmit={handleAddExpense} activeCategories={categories} />
 
           {Object.keys(grouped).length === 0 ? (
             <p className="text-center text-gray-500 py-8">Brak transakcji</p>
@@ -179,8 +238,8 @@ function getCurrentMonth() {
 
                     <div className="flex items-center gap-3 shrink-0 ml-4">
                       <time className="text-xs text-gray-400 whitespace-nowrap">{tx.date}</time>
-                      <span className={`font-semibold whitespace-nowrap ${tx.type === 'Przychód' ? 'text-green-600' : 'text-red-500'}`}>
-                        {tx.amount.toFixed(2)} PLN
+                      <span className={`font-semibold whitespace-nowrap ${tx.type === 'Przychod' ? 'text-[#32a852]' : 'text-red-500 dark:text-red-400'}`}>
+                        {Number(tx.amount).toFixed(2)} PLN
                       </span>
                       {pendingDeleteId === tx.id ? (
                         <div className="flex items-center gap-1 shrink-0">
@@ -205,6 +264,9 @@ function getCurrentMonth() {
           )}
         </>
       )}
+      </div>
+
+      <AddExpenseModal isOpen={modalOpen} onClose={() => setModalOpen(false)} onSubmit={handleAddExpense} activeCategories={categories} />
     </Layout>
   );
 }

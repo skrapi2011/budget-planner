@@ -2,6 +2,8 @@ import { useState, useEffect } from 'react';
 import Layout from '../components/Layout';
 import * as api from '../api';
 import AddBudgetModal from '../components/AddBudgetModal';
+import { currentMonthStr } from '../utils/date';
+import { useAnimatedValue, useCountUp } from '../hooks/animation';
 
 const MONTH_NAMES = [
   'Styczeń', 'Luty', 'Marzec', 'Kwiecień', 'Maj', 'Czerwiec',
@@ -17,22 +19,28 @@ const getBarStatus = (status, pct) => {
 const getSummaryIcon = (status, pct) => {
   const isOver = (status === 'over_budget' || status === 'przekroczony') || pct >= 100;
   if (isOver) return (
-    <div className="w-14 h-14 rounded-xl bg-red-100 flex items-center justify-center">
+    <div className="w-14 h-14 rounded-xl bg-red-100 dark:bg-red-900/30 flex items-center justify-center">
       <svg className="w-7 h-7 text-red-500" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 9v2m0 4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" /></svg>
     </div>
   );
   return (
-    <div className="w-14 h-14 rounded-xl bg-green-100 flex items-center justify-center">
+    <div className="w-14 h-14 rounded-xl bg-green-100 dark:bg-green-900/30 flex items-center justify-center">
       <svg className="w-7 h-7 text-[#32a852]" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z" /></svg>
     </div>
   );
 };
 
+// Pasek postępu animowany: start od 0 przy montowaniu, płynne przejścia między wartościami.
+function AnimatedBar({ pct, className = '' }) {
+  const w = useAnimatedValue(pct);
+  return <div style={{ width: `${w}%` }} className={`transition-all duration-700 ease-out ${className}`} />;
+}
+
 export default function Budzety({ user }) {
   const [budgets, setBudgets] = useState([]);
   const [loading, setLoading] = useState(true);
-  const now = new Date();
-  const [monthStr, setMonthStr] = useState(`${now.getFullYear()}-${String(now.getMonth()+1).padStart(2,'0')}`);
+  const [hasLoaded, setHasLoaded] = useState(false);
+  const [monthStr, setMonthStr] = useState(currentMonthStr());
   const [showModal, setShowModal] = useState(false);
   const [categories, setCategories] = useState([]);
   const [editingBudgets, setEditingBudgets] = useState({});
@@ -72,6 +80,7 @@ export default function Budzety({ user }) {
       setBudgets(sorted);
     } finally {
       setLoading(false);
+      setHasLoaded(true);
     }
   }
 
@@ -93,6 +102,12 @@ export default function Budzety({ user }) {
   const totalBudget = budgets.reduce((sum, b) => sum + (Number(b.budzet) || 0), 0);
   const totalSpent = budgets.reduce((sum, b) => sum + (Number(b.wydatki) || 0), 0);
   const overallPct = totalBudget > 0 ? Math.min(100, (totalSpent / totalBudget) * 100) : 0;
+  const remaining = totalBudget - totalSpent;
+
+  // Liczby w kartach podsumowania animowane count-upem.
+  const animatedTotalBudget = useCountUp(totalBudget);
+  const animatedTotalSpent = useCountUp(totalSpent);
+  const animatedRemaining = useCountUp(remaining);
 
  const handleSaveInline = async (bud, catKey) => {
       const amt = editingBudgets[catKey];
@@ -114,37 +129,49 @@ export default function Budzety({ user }) {
 
   const categoriesLoaded = categories.length > 0;
 
+  const dimmed = loading && hasLoaded;
+
   return (
     <Layout username={user}>
-      {loading ? (
+      {loading && !hasLoaded ? (
         <div className="flex items-center justify-center py-16">
-          <div className="w-8 h-8 border-4 border-green-200 border-t-[#32a852] rounded-full animate-spin" />
+          <div className="w-8 h-8 border-4 border-green-200 dark:border-slate-700 border-t-[#32a852] rounded-full animate-spin" />
         </div>
       ) : (
-        <div className="space-y-6">
+        <div key={monthStr} className={`page-enter space-y-6 transition-opacity ${dimmed ? 'opacity-50 pointer-events-none' : ''}`}>
 
           {/* Month Navigation */}
           <div className="flex items-center justify-between">
             <button onClick={prevMonth} className="p-2 rounded-lg bg-white dark:bg-slate-800 shadow-sm hover:bg-gray-50 dark:hover:bg-slate-700 border border-gray-200 dark:border-slate-700 transition-colors" aria-label="Poprzedni miesiac">
               <svg className="w-5 h-5 text-gray-600 dark:text-slate-300" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 19l-7-7 7-7" /></svg>
             </button>
-            <h2 className="text-xl font-bold text-gray-800 dark:text-slate-100">
-              {MONTH_NAMES[currentMonthIndex]} {currentYear}
-            </h2>
+            <div className="flex items-center gap-3">
+              <h2 className="text-xl font-bold text-gray-800 dark:text-slate-100">
+                {MONTH_NAMES[currentMonthIndex]} {currentYear}
+              </h2>
+              <button
+                onClick={() => setMonthStr(currentMonthStr())}
+                className={`text-xs font-semibold px-2 py-1 rounded-md transition-colors ${
+                  monthStr === currentMonthStr() ? 'bg-[#32a852]/10 text-[#32a852]' : 'text-[#32a852] hover:bg-[#32a852]/10'
+                }`}
+              >
+                Dziś
+              </button>
+            </div>
             <button onClick={nextMonth} className="p-2 rounded-lg bg-white dark:bg-slate-800 shadow-sm hover:bg-gray-50 dark:hover:bg-slate-700 border border-gray-200 dark:border-slate-700 transition-colors" aria-label="Nastepny miesiac">
               <svg className="w-5 h-5 text-gray-600 dark:text-slate-300" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5l7 7-7 7" /></svg>
             </button>
           </div>
 
           {/* Summary Cards */}
-      <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+      <div className="grid grid-cols-1 md:grid-cols-3 gap-4 stagger-children">
             {[
               <div key="overall" className="bg-gradient-to-br from-[#32a852] to-[#1f8c42] rounded-xl shadow-lg p-6 text-white relative overflow-hidden">
                 <div className="absolute top-0 right-0 w-32 h-32 bg-white/10 rounded-full -translate-y-8 translate-x-8" />
                 {getSummaryIcon(overallPct >= 80 ? 'przekroczony' : 'ok')}
                 <div className="relative mt-4">
                   <p className="text-green-100 text-sm font-medium">Całkowity budżet</p>
-                  <p className="text-3xl font-bold mt-1">{totalBudget.toFixed(2)} PLN</p>
+                  <p className="text-3xl font-bold mt-1">{animatedTotalBudget.toFixed(2)} PLN</p>
                 </div>
               </div>,
               <div key="spent" className="bg-white dark:bg-slate-800 rounded-xl shadow-sm p-6 border border-gray-100 dark:border-slate-700">
@@ -156,26 +183,26 @@ export default function Budzety({ user }) {
                     <span className="px-2 py-0.5 rounded-full bg-green-100 dark:bg-green-900/30 text-[#32a852] dark:text-green-400 text-xs font-semibold">OK</span>
                   )}
                 </div>
-                <p className="text-3xl font-bold text-gray-800 dark:text-slate-100">{totalSpent.toFixed(2)} PLN</p>
+                <p className="text-3xl font-bold text-gray-800 dark:text-slate-100">{animatedTotalSpent.toFixed(2)} PLN</p>
                 {totalBudget > 0 && (
                   <p className="text-sm text-gray-400 dark:text-slate-500 mt-1">{overallPct.toFixed(1)}% wykorzystane</p>
                 )}
               </div>,
               <div key="remaining" className="bg-white dark:bg-slate-800 rounded-xl shadow-sm p-6 border border-gray-100 dark:border-slate-700">
                 <p className="text-sm font-medium text-gray-500 dark:text-slate-400 mb-3">Pozostało</p>
-                {(totalBudget - totalSpent) >= 0 ? (
+                {remaining >= 0 ? (
                   <>
-                    <p className="text-3xl font-bold text-[#32a852] dark:text-green-400">{(totalBudget - totalSpent).toFixed(2)} PLN</p>
+                    <p className="text-3xl font-bold text-[#32a852] dark:text-green-400">{animatedRemaining.toFixed(2)} PLN</p>
                     {totalBudget > 0 && (
                       <div className="mt-2 w-full bg-gray-200 dark:bg-slate-700 rounded-full h-2 overflow-hidden">
-                        <div style={{ width: `${Math.max(Math.round(((totalBudget - totalSpent) / totalBudget) * 100), (totalSpent > 0 ? 5 : 0))}%` }} className="bg-[#32a852] dark:bg-green-400 h-2 rounded-full transition-all duration-500" />
+                        <AnimatedBar pct={Math.max(Math.round((remaining / totalBudget) * 100), (totalSpent > 0 ? 5 : 0))} className="bg-[#32a852] dark:bg-green-400 h-2 rounded-full" />
                       </div>
                     )}
                   </>
                 ) : (
                   <>
-                    <p className="text-3xl font-bold text-red-600 dark:text-red-400">-{Math.abs(totalBudget - totalSpent).toFixed(2)} PLN</p>
-                    <p className="text-sm text-red-500 dark:text-red-400 mt-1">Przekroczono budżet o {totalSpent.toFixed(2)} PLN</p>
+                    <p className="text-3xl font-bold text-red-600 dark:text-red-400">-{Math.abs(animatedRemaining).toFixed(2)} PLN</p>
+                    <p className="text-sm text-red-500 dark:text-red-400 mt-1">Przekroczono budżet o {Math.abs(animatedRemaining).toFixed(2)} PLN</p>
                   </>
                 )}
               </div>,
@@ -190,7 +217,7 @@ export default function Budzety({ user }) {
                 <span className={`text-lg font-bold ${overallPct >= 80 ? 'text-red-600 dark:text-red-400' : 'text-[#32a852] dark:text-green-400'}`}>{overallPct.toFixed(1)}%</span>
               </div>
               <div className="w-full bg-gray-200 dark:bg-slate-700 rounded-full h-4 overflow-hidden">
-                <div style={{ width: `${Math.min(100, overallPct)}%` }} className={`h-4 rounded-full transition-all duration-700 ${overallPct >= 80 ? 'bg-gradient-to-r from-red-400 to-red-600' : 'bg-gradient-to-r from-[#32a852] to-[#4dd97a]'}`} />
+                <AnimatedBar pct={Math.min(100, overallPct)} className={`h-4 rounded-full ${overallPct >= 80 ? 'bg-gradient-to-r from-red-400 to-red-600' : 'bg-gradient-to-r from-[#32a852] to-[#4dd97a]'}`} />
               </div>
             </div>
           )}
@@ -251,7 +278,7 @@ export default function Budzety({ user }) {
                       {limit > 0 ? (
                         <>
                           <div className="w-full bg-gray-200 dark:bg-slate-700 rounded-full h-3 overflow-hidden">
-                            <div style={{ width: `${Math.max(pct, spent > 0 ? 5 : 0)}%` }} className={`h-3 rounded-full transition-all duration-700 ${statusInfo.bg}`} />
+                            <AnimatedBar pct={Math.max(pct, spent > 0 ? 5 : 0)} className={`h-3 rounded-full ${statusInfo.bg}`} />
                           </div>
                          <div className="flex justify-between mt-2">
                             <span className="text-xs text-gray-400 dark:text-slate-400 font-medium">{spent.toFixed(2)} PLN wydane</span>

@@ -33,6 +33,13 @@ export default function AddBudgetModal({ monthStr, categories, onClose, onAdded 
     }
   }, [effectiveCats, selectedCatId]);
 
+  // Escape closes the modal.
+  useEffect(() => {
+    const handler = (e) => { if (e.key === 'Escape') onClose(); };
+    window.addEventListener('keydown', handler);
+    return () => window.removeEventListener('keydown', handler);
+  }, [onClose]);
+
   async function handleSubmit(e) {
     e.preventDefault();
     const amt = parseFloat(amount);
@@ -60,9 +67,9 @@ export default function AddBudgetModal({ monthStr, categories, onClose, onAdded 
   return (
     <div className="fixed inset-0 z-[100] flex items-center justify-center" onClick={(e) => e.target === e.currentTarget && onClose()}>
       {/* backdrop */}
-      <div className="absolute inset-0 bg-black/40 backdrop-blur-sm"></div>
+      <div className="absolute inset-0 bg-black/40 backdrop-blur-sm backdrop-in"></div>
 
-      <div className="relative z-10 w-full max-w-md mx-4 rounded-xl bg-white shadow-2xl border border-gray-100 overflow-hidden">
+      <div className="relative z-10 w-full max-w-md mx-4 rounded-xl bg-white shadow-2xl border border-gray-100 overflow-hidden modal-panel-in">
         {/* header */}
         <div className="flex items-center justify-between px-6 py-4 border-b border-gray-100 bg-gradient-to-r from-[#32a852] to-[#1f8c42] text-white">
           <h3 className="text-lg font-bold">Nowy budżet</h3>
@@ -112,6 +119,7 @@ export default function AddBudgetModal({ monthStr, categories, onClose, onAdded 
             <label htmlFor="budgetAmount" className="block text-sm font-medium text-gray-600 mb-1.5">Kwota budżetu (PLN)</label>
             <input
               id="budgetAmount"
+              autoFocus
               type="number"
               step="0.01"
               min="0"

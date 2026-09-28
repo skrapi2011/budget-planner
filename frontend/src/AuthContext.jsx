@@ -21,12 +21,19 @@ export function AuthProvider({ children }) {
     setToken(null);
   };
 
+  const adoptSession = () => {
+    // Pick up a session that is already in localStorage without any network
+    // call — used after registration, where api.register() stores the token.
+    setUser(localStorage.getItem('user'));
+    setToken(localStorage.getItem('token'));
+  };
+
   const handleLogout = async () => {
     try { await api.logout(); } catch {}
     clearSession();
   };
 
-  return <AuthContext.Provider value={{ user, token, login: handleLogin, logout: handleLogout, clearSession }}>{children}</AuthContext.Provider>;
+  return <AuthContext.Provider value={{ user, token, login: handleLogin, logout: handleLogout, clearSession, adoptSession }}>{children}</AuthContext.Provider>;
 }
 
 export function useAuth() {

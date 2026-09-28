@@ -1,6 +1,15 @@
 import React, { useState, useEffect } from 'react';
+import { useToast } from './ToastContext';
 
 export default function AddExpenseModal({ isOpen, onClose, onSubmit, activeCategories = [] }) {
+  // Escape closes the modal.
+  useEffect(() => {
+    if (!isOpen) return undefined;
+    const handler = (e) => { if (e.key === 'Escape') onClose(); };
+    window.addEventListener('keydown', handler);
+    return () => window.removeEventListener('keydown', handler);
+  }, [isOpen, onClose]);
+
   return (
     <div
       className={`fixed inset-0 z-50 flex items-center justify-center bg-black/40 transition-opacity duration-200 ${
@@ -9,7 +18,9 @@ export default function AddExpenseModal({ isOpen, onClose, onSubmit, activeCateg
       onClick={onClose}
     >
       <div
-        className="relative w-full max-w-md mx-4 p-6 bg-white dark:bg-slate-800 rounded-lg shadow-lg pointer-events-auto"
+        className={`relative w-full max-w-md mx-4 p-6 bg-white dark:bg-slate-800 rounded-lg shadow-lg pointer-events-auto transition-transform duration-200 ${
+          isOpen ? 'scale-100' : 'scale-95'
+        }`}
         onClick={(e) => e.stopPropagation()}
       >
         <button
@@ -32,6 +43,7 @@ export default function AddExpenseModal({ isOpen, onClose, onSubmit, activeCateg
 }
 
 function Form({ isOpen, categories, onClose, onSubmit }) {
+  const { error: toastError } = useToast();
   const [type, setType] = useState('wydatek')
   const [amount, setAmount] = useState('')
   const [description, setDescription] = useState('')
@@ -52,7 +64,7 @@ function Form({ isOpen, categories, onClose, onSubmit }) {
   const handleSubmit = (e) => {
     e.preventDefault()
     if (!categoryId) {
-      alert('Wybierz kategorię');
+      toastError('Wybierz kategorię');
       return;
     }
 
@@ -79,6 +91,7 @@ function Form({ isOpen, categories, onClose, onSubmit }) {
         <label htmlFor="typ" className="block text-sm font-medium text-gray-700 dark:text-slate-300 mb-1">Typ</label>
         <select
           id="typ"
+          autoFocus
           value={type}
           onChange={(e) => setType(e.target.value)}
   className="w-full px-3 py-2 border border-gray-300 dark:border-slate-600 bg-white dark:bg-slate-700 text-gray-900 dark:text-slate-100 rounded-md shadow-sm focus:outline-none focus:ring-[#32a852] focus:border-[#32a852]"

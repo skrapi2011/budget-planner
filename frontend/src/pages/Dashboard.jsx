@@ -10,8 +10,11 @@ function useDark() {
   }, []);
   return dark || false;
 }
+import { useNavigate } from 'react-router-dom';
 import Layout from '../components/Layout';
 import AddExpenseModal from '../components/AddExpenseModal';
+import { currentMonthStr } from '../utils/date';
+import { useAnimatedValue, useCountUp } from '../hooks/animation';
 import * as api from '../api';
 import { PieChart, Pie, Cell, BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, Legend, ResponsiveContainer } from 'recharts';
 
@@ -22,15 +25,10 @@ const MONTH_NAMES = [
 
 const GREEN = '#32a852';
 
-function getCurrentMonth() {
-  const now = new Date();
-  return `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}`;
-}
-
 export default function Dashboard({ user }) {
   const [loading, setLoading] = useState(true);
   const [modalOpen, setModalOpen] = useState(false);
-  const [monthStr, setMonthStr] = useState(getCurrentMonth());
+  const [monthStr, setMonthStr] = useState(currentMonthStr());
   const [timeFilter, setTimeFilter] = useState('12m');
 
   // Data from /api/stats/dashboard-data
@@ -40,6 +38,7 @@ export default function Dashboard({ user }) {
   // Active categories for modal dropdown
   const [activeCategories, setActiveCategories] = useState([]);
   const isDark = useDark();
+  const navigate = useNavigate();
 
   useEffect(() => { loadDashboard(); }, [monthStr]);
 
@@ -55,6 +54,7 @@ export default function Dashboard({ user }) {
       setActiveCategories(catList || []);
       // Map budget response to chart-friendly format
       const budgetsMapped = (rawBudgets || []).map(c => ({
+        id: c.cat_id,
         name: c.category_name,
         color: c.color,
         icon: c.icon,
@@ -102,8 +102,8 @@ export default function Dashboard({ user }) {
     return dashData.monthly_history.slice(-count);
   };
 
-  if (loading || !dashData) {
-    return <Layout username={user}><div className="flex items-center justify-center py-24"><div className="w-10 h-10 border-4 border-gray-200 border-t-[#32a852] rounded-full animate-spin" /></div></Layout>;
+  if (!dashData) {
+    return <Layout username={user}><div className="flex items-center justify-center py-24"><div className="w-10 h-10 border-4 border-gray-200 dark:border-slate-700 border-t-[#32a852] rounded-full animate-spin" /></div></Layout>;
   }
 
   const { total_all_time = 0, prev_month_total = 0, month_total = 0, planned_all_time = 0, current_planned = 0, chart_data = [], monthly_history = [] } = dashData;
@@ -124,21 +124,32 @@ export default function Dashboard({ user }) {
 
   return (
     <Layout username={user}>
+      <div key={monthStr} className={`page-enter max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8 transition-opacity ${loading ? 'opacity-50 pointer-events-none' : ''}`}>
       {/* Month Navigation */}
       <div className="flex items-center justify-between mb-8">
         <button onClick={prevMonth} className="p-2 rounded-lg bg-white dark:bg-slate-800 shadow-sm hover:bg-gray-50 dark:hover:slate-700 transition-colors text-gray-600 dark:text-slate-300 border border-gray-200 dark:border-slate-700">
           <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 19l-7-7 7-7" /></svg>
         </button>
-        <h2 className="text-xl font-bold text-gray-800 dark:text-slate-200">
-          {MONTH_NAMES[parseInt(monthStr.split('-')[1], 10) - 1]} {monthStr.split('-')[0]}
-        </h2>
+        <div className="flex items-center gap-3">
+          <h2 className="text-xl font-bold text-gray-800 dark:text-slate-200">
+            {MONTH_NAMES[parseInt(monthStr.split('-')[1], 10) - 1]} {monthStr.split('-')[0]}
+          </h2>
+          <button
+            onClick={() => setMonthStr(currentMonthStr())}
+            className={`text-xs font-semibold px-2 py-1 rounded-md transition-colors ${
+              monthStr === currentMonthStr() ? 'bg-[#32a852]/10 text-[#32a852]' : 'text-[#32a852] hover:bg-[#32a852]/10'
+            }`}
+          >
+            Dziś
+          </button>
+        </div>
        <button onClick={nextMonth} className="p-2 rounded-lg bg-white dark:bg-slate-800 shadow-sm hover:bg-gray-50 dark:hover:slate-700 transition-colors text-gray-600 dark:text-slate-300 border border-gray-200 dark:border-slate-700">
           <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5l7 7-7 7" /></svg>
         </button>
       </div>
 
       {/* Stat Cards */}
-      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-6 mb-8">
+      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-6 mb-8 stagger-children">
         <StatCard label="Budżet miesięczny" value={current_planned} icon={<IconCurrent />} color="#8b5cf6" />
         <StatCard label="Wydatki w tym miesiącu" value={month_total} icon={<IconMonth />} color="#3b82f6" />
         <StatCard2 label="Zmiana wydatków" change={changePct} absDiff={month_total - prev_month_total} monthStr={monthStr} icon={<IconChange />} color={changePct !== null ? (changePct > 0 ? '#ef4444' : '#32a852') : 'var(--tw-text-muted)'} />
@@ -156,6 +167,13 @@ export default function Dashboard({ user }) {
             const sorted = [...monthCat].sort((a, b) => (b.expenditure || 0) - (a.expenditure || 0));
             const monthTotal = monthCat.reduce((s, c) => s + (Number(c.expenditure)||0), 0);
 
+            // Deep link to ExpensesView filtered by this category (?kategoria=<id>),
+            // carrying the month currently shown on the Dashboard (?miesiac=YYYY-MM).
+            const goCategory = (entry) => {
+              const id = entry?.id ?? entry?.payload?.id;
+              if (id != null) navigate(`/wydatki?kategoria=${id}&miesiac=${monthStr}`);
+            };
+
             return (
               <div className="flex items-center gap-6">
                 {/* Category list on the left */}
@@ -168,13 +186,19 @@ export default function Dashboard({ user }) {
                    className="no-scrollbar space-y-2 shrink-0 rounded-xl border border-gray-300 dark:border-slate-600 p-4"
                 >
 {sorted.map((item) => (
-                    <div key={item.name} className="flex items-center gap-2 py-1">
+                    <button
+                      key={item.name}
+                      type="button"
+                      onClick={() => goCategory(item)}
+                      title={`Pokaż wydatki: ${item.name}`}
+                      className="w-full flex items-center gap-2 py-1 rounded-md px-1 -mx-1 transition-colors hover:bg-gray-100 dark:hover:bg-slate-700/60 cursor-pointer"
+                    >
                       <span style={{ backgroundColor: item.color || '#94a3b8' }} className="w-3 h-3 rounded-full shrink-0" />
-                      <div className="flex flex-col">
-                        <span className="text-sm font-medium text-gray-700 dark:text-slate-200">{item.name}</span>
+                      <div className="flex flex-col min-w-0">
+                        <span className="text-sm font-medium text-gray-700 dark:text-slate-200 truncate">{item.name}</span>
                         <span className="text-xs text-gray-400 dark:text-slate-500">{formatMoney(item.expenditure)}</span>
                       </div>
-                    </div>
+                    </button>
                   ))}
                 </div>
                 {/* Pie chart on the right */}
@@ -182,7 +206,7 @@ export default function Dashboard({ user }) {
                   <ResponsiveContainer width={280} height={260}>
                     <PieChart>
                       <Pie
-                        data={sorted.map(c => ({ name: c.name, value: Number(c.expenditure) || 0, color: c.color }))}
+                        data={sorted.map(c => ({ id: c.id, name: c.name, value: Number(c.expenditure) || 0, color: c.color }))}
                         cx="50%"
                         cy="50%"
                         outerRadius="85%"
@@ -192,9 +216,10 @@ export default function Dashboard({ user }) {
                         dataKey="value"
                         nameKey="name"
                         stroke="none"
+                        onClick={goCategory}
                       >
                         {sorted.map((entry, i) => (
-                          <Cell key={`cell-${i}`} fill={entry.color || '#94a3b8'} />
+                          <Cell key={`cell-${i}`} fill={entry.color || '#94a3b8'} style={{ cursor: 'pointer' }} />
                         ))}
                       </Pie>
                       <Tooltip content={<CustomTooltip />} />
@@ -264,6 +289,7 @@ export default function Dashboard({ user }) {
           </div>
         )}
       </Card>
+      </div>
 
       <AddExpenseModal isOpen={modalOpen} onClose={() => setModalOpen(false)} onSubmit={handleAddExpense} activeCategories={activeCategories} />
 
@@ -291,6 +317,7 @@ function Card({ title, children }) {
 }
 
 function StatCard({ label, value, icon, color, badge }) {
+  const animated = useCountUp(value);
   return (
      <div className="bg-white dark:bg-slate-800 rounded-xl shadow-sm hover:shadow-md transition-shadow p-5 relative overflow-hidden">
        {badge && <span className="absolute top-3 right-4 text-xs font-medium bg-gray-100 dark:bg-slate-700 text-gray-600 dark:text-slate-300 px-2 py-0.5 rounded-full">{badge}</span>}
@@ -301,7 +328,7 @@ function StatCard({ label, value, icon, color, badge }) {
          <span className="text-sm font-medium text-gray-600 dark:text-slate-400">{label}</span>
        </div>
 
-       <p className={`text-2xl font-bold`} style={{ color }}>{formatMoney(value)}</p>
+       <p className={`text-2xl font-bold`} style={{ color }}>{formatMoney(animated)}</p>
      </div>
    );
  }
@@ -319,6 +346,7 @@ function StatCard2({ label, change, absDiff: propAbsDiff, monthStr: ms, icon, co
  }, [ms]);
 
   const absDiffRaw = Number(propAbsDiff) || 0;
+  const animatedDiff = useCountUp(absDiffRaw);
   const sign = absDiffRaw >= 0 ? '+' : '';
 
   return (
@@ -339,7 +367,7 @@ function StatCard2({ label, change, absDiff: propAbsDiff, monthStr: ms, icon, co
           {change !== null && change > 0 ? `↑ ${Math.abs(change)}%` : (change !== null ? `↓ ${Math.abs(change)}%` : '—')}
         </p>
         <p className={`text-lg font-bold`} style={{ color: arrowColor }}>
-          {sign}{formatMoney(absDiffRaw)}
+          {sign}{formatMoney(animatedDiff)}
         </p>
       </div>
 
@@ -360,11 +388,18 @@ function CategoryRow({ cat, isDark }) {
     ? Math.max(5, (wydatki / budzet) * 100) 
     : (wydatki > 0 ? 5 : 0);
 
+  // Kółko i pasek zawsze w tym samym kolorze: kolor kategorii, a gdy kategoria
+  // przekroczyła budżet — czerwony (jako sygnał statusu).
+  const overBudget = budzet > 0 && wydatki > budzet;
+  const swatchColor = overBudget ? '#ef4444' : (cat.color || '#94a3b8');
+  // Animacja szerokości paska: od 0 przy montowaniu, płynnie między wartościami.
+  const animatedWidth = useAnimatedValue(rawPct);
+
   return (
     <div className="border-b border-gray-100 dark:border-slate-700 pb-3">
       <div className="flex items-center justify-between mb-2" style={{ flexWrap: 'wrap', gap: '8px' }}>
         <div className="flex items-center gap-3">
-          <span style={{ backgroundColor: cat.color || '#94a3b8' }} className="w-4 h-4 rounded-full shrink-0 shadow-sm border border-gray-100 dark:border-slate-600" />
+          <span style={{ backgroundColor: swatchColor }} className="w-4 h-4 rounded-full shrink-0 shadow-sm border border-gray-100 dark:border-slate-600" />
           <span className="font-medium text-gray-800 dark:text-slate-200">{cat.name}</span>
         </div>
         <div className="text-right">
@@ -382,10 +417,10 @@ function CategoryRow({ cat, isDark }) {
            {/* 'overflow-hidden' na rodzicu sprawia, że pasek szerokości >100% po prostu zniknie za krawędzią */}
           <div
             style={{ 
-              width: `${rawPct}%`,
-              backgroundColor: wydatki > budzet ? '#ef4444' : (cat.color || '#3b82f6') 
+              width: `${animatedWidth}%`,
+              backgroundColor: swatchColor
             }}
-            className="h-full rounded-full transition-all duration-700"
+            className="h-full rounded-full transition-all duration-700 ease-out"
           />
         </div>
       )}
