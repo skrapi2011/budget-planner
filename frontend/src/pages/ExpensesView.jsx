@@ -4,6 +4,7 @@ import Layout from '../components/Layout';
 import AddExpenseModal from '../components/AddExpenseModal';
 import { currentMonthStr } from '../utils/date';
 import * as api from '../api';
+import { useToast } from '../components/ToastContext';
 
 const MONTH_NAMES = [
   'Styczeń', 'Luty', 'Marzec', 'Kwiecień', 'Maj', 'Czerwiec',
@@ -12,7 +13,8 @@ const MONTH_NAMES = [
 
 const fmtMoney = (v) => `${(Number(v) || 0).toLocaleString('pl-PL', { minimumFractionDigits: 2, maximumFractionDigits: 2 })} zł`;
 
- export default function ExpensesView({ user }) {
+ export default function ExpensesView() {
+  const { success, error: toastError } = useToast();
   // Deep link: /wydatki?kategoria=<id> (set by the donut chart on the Dashboard).
   const [searchParams] = useSearchParams();
   const kategoriaParam = searchParams.get('kategoria');
@@ -21,6 +23,7 @@ const fmtMoney = (v) => `${(Number(v) || 0).toLocaleString('pl-PL', { minimumFra
   const [categories, setCategories] = useState([]);
   const [loading, setLoading] = useState(true);
   const [modalOpen, setModalOpen] = useState(false);
+  const [editingTx, setEditingTx] = useState(null);
   const [hasLoaded, setHasLoaded] = useState(false);
   // Deep link may also carry the month shown on the Dashboard (?miesiac=YYYY-MM).
   const miesiacParam = searchParams.get('miesiac');
@@ -82,8 +85,31 @@ const fmtMoney = (v) => `${(Number(v) || 0).toLocaleString('pl-PL', { minimumFra
   };
 
   const handleAddExpense = async (data) => {
-    await api.addTransaction({ ...data });
-    loadExpenses();
+    try {
+      if (editingTx) {
+        // PUT /api/transactions/<id> had no caller: the UI could only add and delete
+        // (audit P0-26).
+        await api.updateTransaction(editingTx.id, { ...data });
+        setEditingTx(null);
+        success('Zapisano zmiany');
+      } else {
+        await api.addTransaction({ ...data });
+        success(data.type === 'Przychod' ? 'Przychod dodany' : 'Wydatek dodany');
+      }
+      loadExpenses();
+    } catch (err) {
+      toastError(err.message || 'Nie udało się zapisać — sprawdź połączenie z serwerem');
+    }
+  };
+
+  const openEditor = (tx) => {
+    setEditingTx(tx);
+    setModalOpen(true);
+  };
+
+  const closeModal = () => {
+    setModalOpen(false);
+    setEditingTx(null);
   };
 
   const handleConfirmDelete = async (id) => {
@@ -91,7 +117,10 @@ const fmtMoney = (v) => `${(Number(v) || 0).toLocaleString('pl-PL', { minimumFra
     try {
       await api.deleteTransaction(id);
       loadExpenses();
-    } catch {}
+      success('Transakcja usunięta');
+    } catch (err) {
+      toastError(err.message || 'Nie udało się usunąć transakcji');
+    }
   };
 
   const handleCancelDelete = () => {
@@ -134,7 +163,7 @@ const fmtMoney = (v) => `${(Number(v) || 0).toLocaleString('pl-PL', { minimumFra
   const dimmed = loading && hasLoaded;
 
   return (
-    <Layout username={user}>
+    <Layout>
       <div key={monthStr} className={`page-enter transition-opacity ${dimmed ? 'opacity-50 pointer-events-none' : ''}`}>
       {/* Month navigation */}
       <div className="flex items-center justify-between mb-6">
@@ -234,6 +263,14 @@ const fmtMoney = (v) => `${(Number(v) || 0).toLocaleString('pl-PL', { minimumFra
                     <span style={{ color: tx.category_color || '#64748b' }} className="flex items-center gap-2 min-w-[140px] shrink-0 max-w-md truncate">
                       {tx.category_icon && <span>{tx.category_icon}</span>}
                       <span className="text-gray-900 dark:text-slate-400 font-medium">{tx.description || tx.category_name}</span>
+                      {/* Tag chips — todo.md #13: tags were invisible in the UI even after being saved */}
+                      {Array.isArray(tx.tags) && tx.tags.length > 0 && (
+                        <span className="flex items-center gap-1 shrink-0">
+                          {tx.tags.map((t) => (
+                            <span key={t} className="px-1.5 py-0.5 text-[11px] rounded-full bg-[#32a852]/10 text-[#1f8c42] dark:bg-[#32a852]/20 dark:text-[#4ade80]">{t}</span>
+                          ))}
+                        </span>
+                      )}
                     </span>
 
                     <div className="flex items-center gap-3 shrink-0 ml-4">
@@ -241,6 +278,9 @@ const fmtMoney = (v) => `${(Number(v) || 0).toLocaleString('pl-PL', { minimumFra
                       <span className={`font-semibold whitespace-nowrap ${tx.type === 'Przychod' ? 'text-[#32a852]' : 'text-red-500 dark:text-red-400'}`}>
                         {Number(tx.amount).toFixed(2)} PLN
                       </span>
+                      <button onClick={() => openEditor(tx)} className="p-1.5 text-gray-400 hover:text-[#32a852] transition-colors rounded-md hover:bg-[#32a852]/10 group" aria-label="Edytuj transakcję" title="Edytuj">
+                        <svg className="w-4 h-4 opacity-50 group-hover:opacity-100 transition-opacity" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M11 5H6a2 2 0 00-2 2v11a2 2 0 002 2h11a2 2 0 002-2v-5m-1.414-9.414a2 2 0 112.828 2.828L11.828 17H9v-2.828l8.586-8.586z" /></svg>
+                      </button>
                       {pendingDeleteId === tx.id ? (
                         <div className="flex items-center gap-1 shrink-0">
                           <button onClick={(e) => { e.stopPropagation(); handleConfirmDelete(tx.id); }} className="p-1 text-green-600 hover:text-green-700 transition-colors rounded-md hover:bg-green-50" aria-label="Potwierdź usunięcie" title="Tak, usuń">
@@ -266,7 +306,7 @@ const fmtMoney = (v) => `${(Number(v) || 0).toLocaleString('pl-PL', { minimumFra
       )}
       </div>
 
-      <AddExpenseModal isOpen={modalOpen} onClose={() => setModalOpen(false)} onSubmit={handleAddExpense} activeCategories={categories} />
+      <AddExpenseModal isOpen={modalOpen} onClose={closeModal} onSubmit={handleAddExpense} activeCategories={categories} initial={editingTx} />
     </Layout>
   );
 }

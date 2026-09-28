@@ -44,7 +44,7 @@ function AnimatedBar({ pct, className = '' }) {
   return <div style={{ width: `${w}%` }} className={`transition-all duration-700 ease-out ${className}`} />;
 }
 
-export default function Budzety({ user }) {
+export default function Budzety() {
   const { success, error: toastError } = useToast();
   const [budgets, setBudgets] = useState([]);
   const [loading, setLoading] = useState(true);
@@ -145,7 +145,7 @@ export default function Budzety({ user }) {
   const dimmed = loading && hasLoaded;
 
   return (
-    <Layout username={user}>
+    <Layout>
       {loading && !hasLoaded ? (
         <div className="flex items-center justify-center py-16">
           <div className="w-8 h-8 border-4 border-green-200 dark:border-slate-700 border-t-[#32a852] rounded-full animate-spin" />

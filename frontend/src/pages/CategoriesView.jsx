@@ -6,7 +6,7 @@ import * as api from '../api';
 // Spread, nie split(''): split tnie pary surrogate i daje 28 polow glifow zamiast 14 emoji.
 const ICON_OPTIONS = [...'\u{1F3C9}\u{1F697}\u{1F3E0}\u{1F3AE}\u{1F48A}\u{1F4DA}\u{1F455}\u{1F4F1}\u{1F3E1}\u{1F381}\u{1F6C6}\u{1F3AF}\u{1F4B0}\u{1F527}'];
 
-export default function CategoriesView({ user }) {
+export default function CategoriesView() {
   const { success, error: toastError, confirm } = useToast();
   const [categories, setCategories] = useState([]);
   const [loading, setLoading] = useState(true);
@@ -77,7 +77,7 @@ export default function CategoriesView({ user }) {
   const quickSelectIcon = (icon) => setNewIcon(icon);
 
   return (
-    <Layout username={user}>
+    <Layout>
       <div className="mb-6">
         <h2 className="text-xl font-bold text-gray-900 mb-1 dark:text-slate-100">Zarządzanie kategoriami</h2>
         <p className="text-sm text-gray-500 dark:text-slate-400">Dodawaj, edytuj i usuwaj swoje kategorie wydatków</p>

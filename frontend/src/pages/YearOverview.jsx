@@ -19,7 +19,7 @@ function AnimatedBar({ pct, color, className = '' }) {
   );
 }
 
-export default function YearOverview({ user }) {
+export default function YearOverview() {
   const [loading, setLoading] = useState(true);
   const [hasLoaded, setHasLoaded] = useState(false);
   const [year, setYear] = useState(currentYear());
@@ -48,7 +48,7 @@ export default function YearOverview({ user }) {
 
   if (!data) {
     return (
-      <Layout username={user}>
+      <Layout>
         <div className="flex items-center justify-center py-24">
           {hasLoaded ? (
             <p className="text-gray-500 dark:text-slate-400">Nie udało się załadować danych. Spróbuj ponownie.</p>
@@ -77,7 +77,7 @@ export default function YearOverview({ user }) {
   const dimmed = loading && hasLoaded;
 
   return (
-    <Layout username={user}>
+    <Layout>
       <div key={year} className={`page-enter transition-opacity ${dimmed ? 'opacity-50 pointer-events-none' : ''}`}>
       {/* Year Navigation */}
       <div className="flex items-center justify-between mb-8">

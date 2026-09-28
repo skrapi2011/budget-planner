@@ -25,7 +25,7 @@ const MONTH_NAMES = [
 
 const GREEN = '#32a852';
 
-export default function Dashboard({ user }) {
+export default function Dashboard() {
   const [loading, setLoading] = useState(true);
   const [modalOpen, setModalOpen] = useState(false);
   const [monthStr, setMonthStr] = useState(currentMonthStr());
@@ -103,7 +103,7 @@ export default function Dashboard({ user }) {
   };
 
   if (!dashData) {
-    return <Layout username={user}><div className="flex items-center justify-center py-24"><div className="w-10 h-10 border-4 border-gray-200 dark:border-slate-700 border-t-[#32a852] rounded-full animate-spin" /></div></Layout>;
+    return <Layout><div className="flex items-center justify-center py-24"><div className="w-10 h-10 border-4 border-gray-200 dark:border-slate-700 border-t-[#32a852] rounded-full animate-spin" /></div></Layout>;
   }
 
   const { total_all_time = 0, prev_month_total = 0, month_total = 0, planned_all_time = 0, current_planned = 0, chart_data = [], monthly_history = [] } = dashData;
@@ -123,7 +123,7 @@ export default function Dashboard({ user }) {
   const changePct = getChangePct(month_total, prev_month_total);
 
   return (
-    <Layout username={user}>
+    <Layout>
       <div key={monthStr} className={`page-enter max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8 transition-opacity ${loading ? 'opacity-50 pointer-events-none' : ''}`}>
       {/* Month Navigation */}
       <div className="flex items-center justify-between mb-8">

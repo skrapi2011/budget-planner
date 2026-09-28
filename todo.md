@@ -2,11 +2,11 @@
 
 Pozostałości z audytu UI/UX (sierpień 2026). Punkty 1–12 wdrożono; poniżej to, co celowo odłożono.
 
-- [ ] **13. Pole tagów w `AddExpenseModal` + chipy tagów na wierszach Wydatków**
-  - Backend w pełni wspiera tagi (JSON array string w kolumnie TEXT), ale UI nie ma żadnego sposobu,
-    żeby je dodać — `api.addTransaction` nie wysyła `tags`. Dopóki tego nie będzie, zakładka Tagi
-    jest widokiem tylko-do-czytania. Wymaga: pole tagów w modalu (dodawanie/usuwanie chipów),
-    wysyłanie w POST/PUT, wyświetlanie chipów przy transakcjach na Wydatkach.
+- [x] **13. Pole tagów w `AddExpenseModal` + chipy tagów na wierszach Wydatków** (wdrożone 2026-09)
+  - Pole „Tagi (po przecinku)” z podpowiedziami z `GET /api/tags/all` (datalist), chipy tagów przy
+    wierszu transakcji na Wydatkach, wysyłka w POST i PUT. Backend: `DELETE /api/tags/<tag>` oraz
+    `PUT /api/tags/<tag>` działają na **całej** historii (`?month=all`), z deduplikacją przy zmianie
+    nazwy. Zakres naprawiony w audycie P0-22/P0-23.
 - [x] **16. Panel: klik w segment donuta → skok do Wydatków z filtrem kategorii** (wdrożone 2026-08)
   - Kontrakt: `/wydatki?kategoria=<id>&miesiac=YYYY-MM` — `ExpensesView` czyta paramy przez
     `useSearchParams`; filtr jest wyprowadzany (derived) z wyboru w select + paramu, nieistniejący

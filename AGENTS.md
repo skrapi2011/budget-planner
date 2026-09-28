@@ -206,7 +206,7 @@ Auth (no token needed except where noted):
 | `POST /api/auth/register` | `{username, password, confirmPassword}` (min 4 chars) | 201 `{token, username}`; seeds the user's default categories |
 | `POST /api/auth/login` | `{username, password}` | `{token, username}` |
 | `DELETE\|POST /api/auth/logout` | — | no-op `{success:true}` (JWT is stateless) |
-| `GET /api/auth/status` 🔒 | — | `{authenticated, username}` |
+| `GET /api/auth/status` 🔒 | — | `{authenticated, username}` — called by `AuthContext` on startup to drop a stale JWT before the first page renders |
 
 🔒 = requires `Authorization: Bearer`.
 
@@ -215,7 +215,7 @@ Categories:
 | Method & path | Notes |
 |---|---|
 | `GET /api/categories?active=` 🔒 | `active=true\|false\|-1` (omit or `-1` = no filter) |
-| `GET /api/categories/active` 🔒 | only `active=1`, ordered by `default_order` |
+| `GET /api/categories/active` 🔒 | only `active=1`, ordered by `default_order` — `api.getCategories(true)` calls this |
 | `POST /api/categories` 🔒 | `{name, color?, icon?}` → 201; duplicate name for user → 409 |
 | `PUT /api/categories/<id>` 🔒 | partial: any of `name,color,icon,default_order,active` |
 | `DELETE /api/categories/<id>` 🔒 | cascades to the user's transactions **and budgets** (see bug §9.2) |
@@ -224,9 +224,7 @@ Budgets:
 
 | Method & path | Notes |
 |---|---|
-| `GET /api/budgets?month=YYYY-MM` 🔒 | month **required**; returns only *existing* Budgets rows, alias `budzet` |
-| `GET /api/budgets/by-month?month=` 🔒 | LEFT JOIN: all active categories + `wydatki`, `saldo`, `status` (`in_budget`\|`over_budget`) |
-| `POST /api/budgets/by-month-post` 🔒 | **same response as `by-month` but POST** — this is the one the UI actually uses |
+| `POST /api/budgets/by-month-post` 🔒 | `{month}` → LEFT JOIN: all active categories + `wydatki`, `saldo`, `status` (`in_budget`\|`over_budget`). The only budgets-view endpoint — the copy-paste GET twin `GET /api/budgets/by-month` and the unused `GET /api/budgets?month=` were removed (audit P0-25); `GET /api/budgets` with GET now returns **405** |
 | `POST /api/budgets` 🔒 | `{category_id, amount_monthly, month_year}` → 201; UNIQUE conflict → upsert → 200 |
 | `PUT /api/budgets/<id>` 🔒 | `{amount}` or `{amount_monthly}` (≥ 0) |
 
@@ -234,19 +232,19 @@ Transactions:
 
 | Method & path | Notes |
 |---|---|
-| `GET /api/transactions?month=&category=&keyword=` 🔒 | ⚠️ **defaults to the current month** when `month` omitted; keyword searches description AND tags; `tags` returned as parsed array |
+| `GET /api/transactions?month=&category=&keyword=` 🔒 | ⚠️ **defaults to the current month** when `month` omitted; **`month=all` = the user's whole history** (used by `Tags.jsx`); keyword searches description AND tags; `tags` returned as parsed array |
 | `POST /api/transactions` 🔒 | `{type, amount>0, date, category_id, description?, tags?[]}` → 201 full row |
-| `PUT /api/transactions/<id>` 🔒 | partial update of any of `type,amount,date,category_id,description,tags` |
+| `PUT /api/transactions/<id>` 🔒 | partial update of any of `type,amount,date,category_id,description,tags` — driven by the edit button in `ExpensesView` (audit P0-26) |
 | `DELETE /api/transactions/<id>` 🔒 | |
-| `GET /api/transactions/recent?limit=` 🔒 | newest by `created_at`, default 10 |
 
 Tags & stats:
 
 | Method & path | Notes |
 |---|---|
-| `GET /api/tags/all` 🔒 | distinct tags via `json_each(Transactions.tags)` |
-| `POST /api/stats/month-summary` 🔒 | `{month}` → per-category budget vs expenditure + totals |
-| `POST /api/stats/dashboard-data` 🔒 | `{month}` (⚠️ effectively required, see §9.1) → dashboard KPIs, chart data, 13-month history |
+| `GET /api/tags/all` 🔒 | distinct tags via `json_each(Transactions.tags)`; Python fallback for rows whose `tags` is not valid JSON (audit P0-12) |
+| `DELETE /api/tags/<tag>` 🔒 | removes the tag from **every** transaction of the user → `{removed_from: n}` |
+| `PUT /api/tags/<tag>` 🔒 | `{new_name}` → renames across the whole history, deduplicating within a row → `{renamed_in: n}`; missing `new_name` → 400 |
+| `POST /api/stats/dashboard-data` 🔒 | `{month}` (optional — defaults to the current month) → dashboard KPIs, chart data, 13-month history |
 | `POST /api/stats/year-summary` 🔒 | `{year}` → yearly totals, monthly breakdown (Polish month names), category variance |
 
 ### 6.3 ⚠️ Status-code inconsistencies (do not "normalize" unilaterally)
@@ -297,9 +295,9 @@ Route paths are **Polish and part of the contract** — don't rename them withou
   (`data.categoryId || data.category_id`, `data.amount_monthly || data.budzet`). New code
   should send snake_case (matching the API), but don't remove the fallbacks — older pages
   rely on them.
-- ⚠️ Misleading name: `getTransactionsAll()` does **not** return all transactions — it calls
-  `GET /api/transactions` with no params, which the backend scopes to **the current month**.
-  To fetch a *specific* month use `getTransactions(monthStr)` (sends `?month=YYYY-MM`).
+- `getTransactionsAll()` calls `GET /api/transactions?month=all` and returns the user's
+  **whole** history (used by `Tags.jsx`, which must see tags from past months). To fetch a
+  *specific* month use `getTransactions(monthStr)` (sends `?month=YYYY-MM`).
   Month-scoped pages (ExpensesView) must pass the selected month, not call `getTransactionsAll()`.
 - **Session-expiry flow (401):** `_fetch` treats a 401 on an *authenticated* request as an
   expired session — it clears `token`/`user` from localStorage and calls the handler registered
@@ -395,26 +393,27 @@ There is **no test suite and no CI**. Verify changes this way, in order:
 
 ## 9. Known issues & tech debt (⚠️ read before touching nearby code)
 
-1. **`POST /api/stats/dashboard-data` 500s if `month` is omitted.** The "default to current
-   month" branch never defines `year_s`/`mon_s`, which are used later → `NameError`. The
-   frontend always sends `month`, so it's masked. Either fix the backend default or keep
-   sending `month` — don't rely on the omission path.
-2. **`DELETE /api/categories/<id>` deletes Budgets rows for ALL users**
-   (`DELETE FROM Budgets WHERE category_id=?` has no `user_id` filter), while transactions
-   are correctly scoped. A real cross-user data bug.
+1. ~~`POST /api/stats/dashboard-data` 500s if `month` is omitted~~ **fixed**: the month is
+   normalised up front, so omitting `month` defaults to the current month and returns 200.
+2. ~~`DELETE /api/categories/<id>` deletes Budgets rows for ALL users~~ **fixed**: the budget
+   delete is scoped by `user_id`, and `Budgets.category_id` is `ON DELETE CASCADE` (§5/§9.8),
+   so a category delete cascades only within the owning user.
 3. **`backend/seed.py` is stale and inconsistent with reality.** It hardcodes `2025-07`,
    uses different category names (`"Nośność / Miejsce zamieszkania"` vs the actual
    `"Mieszkanie"`, etc.) and is never called by `App.py`. The *real* seeder is
    `init_db()` + `_seed_categories_for_user()` + `seed_dummy_data()` inside `App.py`.
    Treat `seed.py` as legacy; don't extend it, and don't trust its category list.
-4. **Duplicate endpoints:** `GET /api/budgets/by-month` and `POST /api/budgets/by-month-post`
-   contain identical query logic (copy-paste). The UI uses the POST one. Prefer extending
-   one and aliasing, but be careful — both are live.
+4. ~~Duplicate `by-month` endpoints~~ **fixed**: `GET /api/budgets/by-month` and
+   `GET /api/budgets?month=` (both with no frontend caller) were removed; the single
+   implementation is `_budgets_view()` behind `POST /api/budgets/by-month-post`. Also removed
+   as caller-less: `GET /api/transactions/recent` and `POST /api/stats/month-summary`.
+   `GET /api/categories/active` and `GET /api/auth/status` now have callers.
 5. **Weak default JWT secret:**
    `SECRET_KEY = os.environ.get("SECRET_KEY", "planowanie-wydatkow-jwt")`. Must be set in
    any real deployment; tokens minted under different secrets won't validate against each
    other.
-6. **`app.run(debug=True)`** is fine for dev but must not ship to production.
+6. ~~`app.run(debug=True)`~~ **fixed**: debug is off by default; set `FLASK_DEBUG=1` to enable
+   it for dev. Unhandled exceptions return JSON `{"error":"Internal server error"}` (500).
 7. **No backend dependency manifest.** `flask`, `pyjwt`, `flask-cors` are implicit
    (werkzeug comes with Flask). If you add a dependency, create/maintain `requirements.txt`.
 8. **Deploy config is contradictory:** `package.json` has a `deploy: gh-pages -d dist`
@@ -422,6 +421,13 @@ There is **no test suite and no CI**. Verify changes this way, in order:
    don't remove either without confirming.
 9. **`README.md` is one line.** This file (AGENTS.md) is the de-facto documentation —
    keep it updated when contracts change.
+10. **Nested `<button>` in `Tags.jsx`** — the tag row is a `<button>` that contains the
+    rename/delete buttons. React warns `In HTML, <button> cannot be a descendant of <button>`
+    and the nesting is invalid HTML (breaks hydration / a11y). Restructure the row (e.g. a
+    `<div>` with the label as a button) when touching that page.
+11. **Lint baseline is not clean:** `npm run lint` reports problems in committed code
+    (`_fix_colors.js` from the init commit, react-hooks warnings, etc.). Do not assume a
+    green lint run is the pre-existing state — compare against the baseline before shipping.
 
 ---
 

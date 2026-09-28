@@ -1,4 +1,4 @@
-import { createContext, useContext, useState } from 'react';
+import { createContext, useContext, useState, useEffect } from 'react';
 import * as api from './api';
 
 const AuthContext = createContext(null);
@@ -6,6 +6,17 @@ const AuthContext = createContext(null);
 export function AuthProvider({ children }) {
   const [user, setUser] = useState(localStorage.getItem('user'));
   const [token, setToken] = useState(localStorage.getItem('token'));
+
+  // Validate a stored token once at startup: a JWT that the server no longer accepts
+  // used to survive until the first API call, leaving the SPA showing a logged-in shell
+  // that then bounced to /login. GET /auth/status had no caller (audit P0-25).
+  useEffect(() => {
+    if (!token) return;
+    api.getAuthStatus()
+      .then((s) => { if (!s || s.authenticated !== true) clearSession(); })
+      .catch(() => { /* 401 path already clears the session via the expired handler */ });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   const handleLogin = async (username, password) => {
     await api.login(username, password);

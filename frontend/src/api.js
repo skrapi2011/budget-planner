@@ -52,6 +52,12 @@ export async function login(username, password) {
   return data;
 }
 
+export async function getAuthStatus() {
+  // Was an endpoint with no caller (audit P0-25); now used by AuthContext to validate
+  // a stored token at startup, so a stale JWT is dropped before the first page renders.
+  return _fetch('/auth/status', { method: 'GET', headers: getHeaders(true) });
+}
+
 export async function logout() {
   // Backend logout is a stateless no-op (no @require_auth), so we skip the
   // auth header — an expired token here must NOT trigger the session-expired toast.
@@ -77,6 +83,11 @@ export async function register(username, password, confirmPassword) {
 // ---- CATEGORIES ----
 
 export async function getCategories(active) {
+  // active=true has a dedicated endpoint (ordered by default_order) that had no caller
+  // (audit P0-25); use it instead of re-implementing the filter via query string.
+  if (active === true) {
+    return _fetch('/categories/active', { method: 'GET', headers: getHeaders(true) });
+  }
   const params = new URLSearchParams();
   if (active !== undefined) params.set('active', String(active));
   const query = params.toString() ? `?${params.toString()}` : '';
@@ -124,7 +135,10 @@ export async function addTransaction(data) {
       date: data.date, 
       amount: parseFloat(data.amount), 
       type: data.type || 'wydatek', 
-      description: data.description || '' 
+      description: data.description || '', 
+      // tags was dropped here, so the whole tags backend (json_each, /tags/all,
+      // PUT tags) was unreachable from the UI (audit P0-22).
+      tags: Array.isArray(data.tags) ? data.tags : (data.tags ? String(data.tags).split(',').map((t) => t.trim()).filter(Boolean) : []) 
     }) 
   });
 }
@@ -133,9 +147,27 @@ export async function deleteTransaction(id) {
   return _fetch(`/transactions/${id}`, { method: 'DELETE', headers: getHeaders(true) });
 }
 
-// Fetches all transactions of the current user (backend filters by user_id).
+export async function updateTransaction(id, data) {
+  // PUT /api/transactions/<id> existed with no caller (audit P0-26).
+  return _fetch(`/transactions/${id}`, {
+    method: 'PUT',
+    headers: getHeaders(true),
+    body: JSON.stringify({
+      category_id: Number(data.categoryId || data.category_id),
+      date: data.date,
+      amount: parseFloat(data.amount),
+      type: data.type || 'wydatek',
+      description: data.description || '',
+      tags: Array.isArray(data.tags) ? data.tags : (data.tags ? String(data.tags).split(',').map((t) => t.trim()).filter(Boolean) : []),
+    }),
+  });
+}
+
+// Fetches every transaction of the current user (backend filters by user_id).
+// `month=all` skips the date filter — the default GET is current-month only (§7.2),
+// which made the Tags tab operate on a month while promising "all transactions" (P0-23).
 export async function getTransactionsAll() {
-  return _fetch('/transactions', { method: 'GET', headers: getHeaders(true) });
+  return _fetch('/transactions?month=all', { method: 'GET', headers: getHeaders(true) });
 }
 
 // Transactions for a specific month ("YYYY-MM"). Without `month` the backend
@@ -153,32 +185,16 @@ export async function getAllTags() {
   return _fetch('/tags/all', { method: 'GET', headers: getHeaders(true) });
 }
 
-// Tag-manipulation helpers used by Tags.jsx
+// Tag-manipulation helpers used by Tags.jsx. Single backend call over ALL the user's
+// transactions; errors propagate so Tags.jsx can show a failure toast (audit P0-23 —
+// the old version looped over current-month transactions, swallowed every error and
+// reported success even when the backend failed).
 export async function deleteTag(tagToRemove) {
-  try {
-    const txns = await _fetch('/transactions', { method: 'GET', headers: getHeaders(true) });
-    for (const t of (txns || [])) {
-      let tags = [];
-      if (typeof t.tags === 'string') { try { tags = JSON.parse(t.tags); } catch {} } else if (Array.isArray(t.tags)) { tags = t.tags; }
-      const filtered = Array.isArray(tags) ? tags.filter((x) => x !== tagToRemove) : [];
-      if (filtered.length !== tags.length || !Array.isArray(filtered)) {
-        await _fetch(`/transactions/${t.id}`, { method: 'PUT', headers: getHeaders(true), body: JSON.stringify({ tags: filtered }) });
-      }
-    }
-  } catch {}
+  return _fetch(`/tags/${encodeURIComponent(tagToRemove)}`, { method: 'DELETE', headers: getHeaders(true) });
 }
 
-export async function updateTagName(editId, newName) {
-  try {
-    const txns = await _fetch('/transactions', { method: 'GET', headers: getHeaders(true) });
-    for (const t of (txns || [])) {
-      let tags = [];
-      if (typeof t.tags === 'string') { try { tags = JSON.parse(t.tags); } catch {} } else if (Array.isArray(t.tags)) { tags = t.tags; }
-      const idx = Array.isArray(tags) ? tags.indexOf(editId) : -1;
-      if (idx > -1) tags[idx] = newName;
-      await _fetch(`/transactions/${t.id}`, { method: 'PUT', headers: getHeaders(true), body: JSON.stringify({ tags }) });
-    }
-  } catch {}
+export async function updateTagName(oldName, newName) {
+  return _fetch(`/tags/${encodeURIComponent(oldName)}`, { method: 'PUT', headers: getHeaders(true), body: JSON.stringify({ new_name: newName }) });
 }
 
 // ---- STATS/BUDGETS VIEW HELPERS ----

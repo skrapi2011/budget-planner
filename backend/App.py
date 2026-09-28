@@ -521,102 +521,57 @@ def delete_category(cid):
 
 # ---- BUDGETS ROUTES ----
 
-@app.route("/api/budgets", methods=["GET"])
-@require_auth
-def get_budgets():
-    month = request.args.get("month")
-    if not month:
-        return jsonify({"error": "Month parameter required"}), 400
+def _budgets_view(conn, user_id, month_key):
+    """Active categories + budget + spending + saldo + status for one month.
 
-    conn = get_connection()
-    try:
-        rows = conn.execute(
-            """SELECT b.id, b.amount_monthly AS budzet, b.month_year,
-                      c.name AS category_name, c.color, c.active, c.icon
-               FROM Budgets b
-               JOIN Categories c ON c.id=b.category_id
-               WHERE b.user_id=? AND b.month_year=?
-               ORDER BY c.default_order ASC""",
-            (g.current_user_id, month),
-        ).fetchall()
+    Shared by the POST endpoint. The GET twin was an exact copy-paste (AGENTS.md §9.4)
+    with no caller in the frontend (audit P0-25), so it is removed and this is the single
+    implementation. Audit P0-7: SUM(amount) without a type filter counted 'Przychod' as
+    spending, so the Budgets page reported "Przekroczony" whenever income was recorded.
+    """
+    first_of_month, next_first = month_window(*parse_month(month_key))
 
-        result = []
-        for r in rows:
-            result.append({
-                "id": r["id"],
-                "budzet": r["budzet"],
-                "month_year": r["month_year"],
-                "category_name": r["category_name"],
-                "color": r["color"],
-                "active": r["active"] == 1,
-                "icon": r["icon"],
-            })
-        return jsonify(result), 200
-    finally:
-        conn.close()
+    budget_rows = conn.execute(
+        """SELECT c.id AS cat_id, c.name, c.color, c.icon, b.id AS budget_id,
+                COALESCE(b.amount_monthly, 0) AS budzet
+        FROM Categories c
+        LEFT JOIN Budgets b ON b.category_id=c.id AND b.month_year=? AND b.user_id=?
+        WHERE c.user_id=? AND COALESCE(c.active,1)=1""",
+        (month_key, user_id, user_id),
+    ).fetchall()
 
+    spending_rows = conn.execute(
+        """SELECT category_id AS cat_id, ROUND(SUM(amount), 2) AS wydatki
+           FROM Transactions
+           WHERE user_id=? AND type='wydatek' AND date>=? AND date<?
+           GROUP BY category_id""",
+        (user_id, first_of_month, next_first),
+    ).fetchall()
 
-@app.route("/api/budgets/by-month", methods=["GET"])
-@require_auth
-def budgets_by_month():
-    month = request.args.get("month")
-    if not month:
-        month = datetime.now().strftime("%Y-%m")
+    spending_map = {}
+    for sr in spending_rows:
+        if sr["cat_id"] is not None and sr["wydatki"] is not None:
+            spending_map[sr["cat_id"]] = float(sr["wydatki"])
 
-    parsed = parse_month(month)
-    if not parsed:
-        return jsonify({"error": "Invalid month parameter (expected YYYY-MM)"}), 400
-    month_key = f"{parsed[0]}-{parsed[1]:02d}"
-    first_of_month, next_first = month_window(*parsed)
-
-    conn = get_connection()
-    try:
-        budget_rows = conn.execute(
-            """SELECT c.id AS cat_id, c.name, c.color, c.icon, b.id AS budget_id,
-                    COALESCE(b.amount_monthly, 0) AS budzet
-            FROM Categories c
-            LEFT JOIN Budgets b ON b.category_id=c.id AND b.month_year=? AND b.user_id=?
-            WHERE c.user_id=? AND COALESCE(c.active,1)=1""",
-            (month_key, g.current_user_id, g.current_user_id),
-        ).fetchall()
-
-        # Audit P0-7: SUM(amount) without a type filter counted 'Przychod' as spending,
-        # so the Budgets page reported "Przekroczony" whenever income was recorded.
-        spending_rows = conn.execute(
-            """SELECT category_id AS cat_id, ROUND(SUM(amount), 2) AS wydatki
-               FROM Transactions
-               WHERE user_id=? AND type='wydatek' AND date>=? AND date<?
-               GROUP BY category_id""",
-            (g.current_user_id, first_of_month, next_first),
-        ).fetchall()
-
-        spending_map = {}
-        for sr in spending_rows:
-            if sr["cat_id"] is not None and sr["wydatki"] is not None:
-                spending_map[sr["cat_id"]] = float(sr["wydatki"])
-
-        result = []
-        for br in budget_rows:
-            wydatki = spending_map.get(br["cat_id"], 0.0) or 0.0
-            saldo = round(float(br["budzet"]) - wydatki, 2)
-            status_note = "in_budget" if saldo >= 0 else "over_budget"
-            result.append({
-                "id": br["budget_id"],
-                "cat_id": br["cat_id"],
-                "category_id": br["cat_id"],
-                "category_name": br["name"],
-                "color": br["color"],
-                "icon": br["icon"],
-                "budzet": float(br["budzet"]),
-                "wydatki": wydatki,
-                "saldo": saldo,
-                "status": status_note,
-                "active": True,
-            })
-
-        return jsonify(result), 200
-    finally:
-        conn.close()
+    result = []
+    for br in budget_rows:
+        wydatki = spending_map.get(br["cat_id"], 0.0) or 0.0
+        saldo = round(float(br["budzet"]) - wydatki, 2)
+        status_note = "in_budget" if saldo >= 0 else "over_budget"
+        result.append({
+            "id": br["budget_id"],
+            "cat_id": br["cat_id"],
+            "category_id": br["cat_id"],
+            "category_name": br["name"],
+            "color": br["color"],
+            "icon": br["icon"],
+            "budzet": float(br["budzet"]),
+            "wydatki": wydatki,
+            "saldo": saldo,
+            "status": status_note,
+            "active": True,
+        })
+    return result
 
 
 @app.route("/api/budgets/by-month-post", methods=["POST"])
@@ -631,53 +586,10 @@ def budgets_by_month_post():
     if not parsed:
         return jsonify({"error": "Invalid month parameter (expected YYYY-MM)"}), 400
     month_key = f"{parsed[0]}-{parsed[1]:02d}"
-    first_of_month, next_first = month_window(*parsed)
 
     conn = get_connection()
     try:
-        budget_rows = conn.execute(
-            """SELECT c.id AS cat_id, c.name, c.color, c.icon, b.id AS budget_id,
-                    COALESCE(b.amount_monthly, 0) AS budzet
-            FROM Categories c
-            LEFT JOIN Budgets b ON b.category_id=c.id AND b.month_year=? AND b.user_id=?
-            WHERE c.user_id=? AND COALESCE(c.active,1)=1""",
-            (month_key, g.current_user_id, g.current_user_id),
-        ).fetchall()
-
-        # Audit P0-7: see the GET twin above — income must not count as spending.
-        spending_rows = conn.execute(
-            """SELECT category_id AS cat_id, ROUND(SUM(amount), 2) AS wydatki
-               FROM Transactions
-               WHERE user_id=? AND type='wydatek' AND date>=? AND date<?
-               GROUP BY category_id""",
-            (g.current_user_id, first_of_month, next_first),
-        ).fetchall()
-
-        spending_map = {}
-        for sr in spending_rows:
-            if sr["cat_id"] is not None and sr["wydatki"] is not None:
-                spending_map[sr["cat_id"]] = float(sr["wydatki"])
-
-        result = []
-        for br in budget_rows:
-            wydatki = spending_map.get(br["cat_id"], 0.0) or 0.0
-            saldo = round(float(br["budzet"]) - wydatki, 2)
-            status_note = "in_budget" if saldo >= 0 else "over_budget"
-            result.append({
-                "id": br["budget_id"],
-                "cat_id": br["cat_id"],
-                "category_id": br["cat_id"],
-                "category_name": br["name"],
-                "color": br["color"],
-                "icon": br["icon"],
-                "budzet": float(br["budzet"]),
-                "wydatki": wydatki,
-                "saldo": saldo,
-                "status": status_note,
-                "active": True,
-            })
-
-        return jsonify(result), 200
+        return jsonify(_budgets_view(conn, g.current_user_id, month_key)), 200
     finally:
         conn.close()
 
@@ -779,18 +691,26 @@ def get_transactions():
     cat_filter = request.args.get("category")
     keyword = request.args.get("keyword")
 
-    parsed = parse_month(month)
-    if not parsed:
-        return jsonify({"error": "Invalid month parameter (expected YYYY-MM)"}), 400
-    first_of_month, next_first = month_window(*parsed)
+    if month == "all":
+        # Explicit opt-out of the date filter (Tags tab needs the full history to match
+        # its "all transactions" copy; the default is current-month, AGENTS.md §7.2).
+        date_range = None
+    else:
+        parsed = parse_month(month)
+        if not parsed:
+            return jsonify({"error": "Invalid month parameter (expected YYYY-MM)"}), 400
+        date_range = month_window(*parsed)
 
     conn = get_connection()
     try:
         query_text = """SELECT t.*, c.name AS category_name, c.color AS category_color, c.icon AS category_icon
                    FROM Transactions t
                    JOIN Categories c ON c.id=t.category_id
-                   WHERE t.user_id=? AND t.date>=? AND t.date<?"""
-        params = [g.current_user_id, first_of_month, next_first]
+                   WHERE t.user_id=?"""
+        params = [g.current_user_id]
+        if date_range:
+            query_text += " AND t.date>=? AND t.date<?"
+            params.extend(date_range)
 
         if cat_filter:
             try:
@@ -994,48 +914,6 @@ def delete_transaction(tid):
         conn.close()
 
 
-@app.route("/api/transactions/recent", methods=["GET"])
-@require_auth
-def recent_transactions():
-    try:
-        limit_val = int(request.args.get("limit") or 10)
-    except (ValueError, TypeError):
-        limit_val = 10
-
-    conn = get_connection()
-    try:
-        rows = conn.execute(
-            """SELECT t.*, c.name AS category_name, c.color, c.icon
-               FROM Transactions t
-               JOIN Categories c ON c.id=t.category_id
-               WHERE t.user_id=?
-               ORDER BY t.created_at DESC
-               LIMIT ?""",
-            (g.current_user_id, limit_val),
-        ).fetchall()
-
-        result = []
-        for r in rows:
-            rd = {}
-            for k in r.keys():
-                v = r[k]
-                if hasattr(v, "isoformat"):
-                    v = v.isoformat()
-                elif isinstance(v, str) and k == "tags":
-                    try:
-                        v = json.loads(v)
-                    except Exception:
-                        v = []
-                rd[k] = v
-
-            result.append(rd)
-        return jsonify(result), 200
-    finally:
-        conn.close()
-
-
-# ---- TAGS ROUTES ----
-
 @app.route("/api/tags/all", methods=["GET"])
 @require_auth
 def get_all_tags():
@@ -1068,76 +946,67 @@ def get_all_tags():
         conn.close()
 
 
-# ---- STATS ROUTES ----
+def _transform_user_tags(conn, user_id, fn):
+    """Apply fn(tags_list) -> new list to every transaction of `user_id`; write back changed rows.
 
-@app.route("/api/stats/month-summary", methods=["POST"])
+    Tags are stored as a JSON array string, so set operations are far easier in Python
+    than in SQL. Used by the delete/rename endpoints, which must cover the user's whole
+    history — not just the current month (audit P0-23).
+    """
+    changed = 0
+    for r in conn.execute(
+        "SELECT id, tags FROM Transactions WHERE user_id=?", (user_id,)
+    ).fetchall():
+        try:
+            arr = json.loads(r["tags"]) if r["tags"] else []
+        except Exception:
+            continue
+        if not isinstance(arr, list):
+            continue
+        new = fn([str(x) for x in arr])
+        if new != arr:
+            conn.execute(
+                "UPDATE Transactions SET tags=? WHERE id=? AND user_id=?",
+                (json.dumps(new), r["id"], user_id),
+            )
+            changed += 1
+    return changed
+
+
+@app.route("/api/tags/<tag>", methods=["DELETE"])
 @require_auth
-def month_summary_stats():
-    data = request.get_json(silent=True) or {}
-    month = (data.get("month") or "").strip()
-    if not month:
-        return jsonify({"error": "Month parameter required"}), 400
-
-    parsed = parse_month(month)
-    if not parsed:
-        return jsonify({"error": "Invalid month parameter (expected YYYY-MM)"}), 400
-    month_key = f"{parsed[0]}-{parsed[1]:02d}"
-    first_of_month, next_first = month_window(*parsed)
-
+def delete_tag(tag):
     conn = get_connection()
     try:
-        cat_rows = conn.execute(
-            """SELECT c.id AS cat_id, c.name, c.color, COALESCE(b.amount_monthly, 0) AS budget
-               FROM Categories c
-               LEFT JOIN Budgets b ON b.category_id=c.id AND b.month_year=? AND b.user_id=?
-               WHERE c.active=1 AND c.user_id=?""",
-            (month_key, g.current_user_id, g.current_user_id),
-        ).fetchall()
-
-        # Audit P0-7: income was summed into expenditure here as well.
-        spend_rows = conn.execute(
-            """SELECT category_id AS cat_id, SUM(amount) AS expenditure
-               FROM Transactions
-               WHERE user_id=? AND type='wydatek' AND date>=? AND date<?
-               GROUP BY category_id""",
-            (g.current_user_id, first_of_month, next_first),
-        ).fetchall()
-
-        spend_map = {}
-        for sr in spend_rows:
-            if sr["cat_id"] is not None and sr["expenditure"] is not None:
-                spend_map[sr["cat_id"]] = float(sr["expenditure"])
-
-        categories_out = []
-        total_remaining_budzet = 0.0
-        real_total_spending = 0.0
-
-        for cr in cat_rows:
-            expenditure = spend_map.get(cr["cat_id"], 0.0) or 0.0
-            budget_val = float(cr["budget"])
-            balance = round(budget_val - expenditure, 2)
-            status_str = "in_budget" if balance >= 0 else "over_budget"
-
-            categories_out.append({
-                "name": cr["name"],
-                "color": cr["color"],
-                "expenditure": round(expenditure, 2),
-                "budget": budget_val,
-                "status": status_str,
-                "balance": balance,
-            })
-
-            total_remaining_budzet += max(0.0, balance)
-            real_total_spending += expenditure
-
-        return jsonify({
-            "categories": categories_out,
-            "total_remaining_budzet": round(total_remaining_budzet, 2),
-            "real_total_spending": round(real_total_spending, 2),
-        }), 200
+        n = _transform_user_tags(conn, g.current_user_id, lambda a: [x for x in a if x != tag])
+        conn.commit()
+        return jsonify({"removed_from": n}), 200
     finally:
         conn.close()
 
+
+@app.route("/api/tags/<tag>", methods=["PUT"])
+@require_auth
+def rename_tag(tag):
+    data = request.get_json(silent=True) or {}
+    new_name = (data.get("new_name") or "").strip()
+    if not new_name:
+        return jsonify({"error": "new_name is required"}), 400
+    conn = get_connection()
+    try:
+        # dict.fromkeys keeps order and dedups: renaming "a"->"b" in a transaction that
+        # already carries "b" must not create a duplicate tag (audit P0-23).
+        n = _transform_user_tags(
+            conn, g.current_user_id,
+            lambda a: list(dict.fromkeys([new_name if x == tag else x for x in a])),
+        )
+        conn.commit()
+        return jsonify({"renamed_in": n}), 200
+    finally:
+        conn.close()
+
+
+# ---- STATS ROUTES ----
 
 @app.route("/api/stats/dashboard-data", methods=["POST"])
 @require_auth

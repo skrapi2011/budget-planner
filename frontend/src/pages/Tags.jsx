@@ -4,7 +4,7 @@ import Layout from '../components/Layout';
 import { useToast } from '../components/ToastContext';
 import * as api from '../api';
 
-export default function Tags({ user }) {
+export default function Tags() {
   const navigate = useNavigate();
   const { success, error: toastError, confirm } = useToast();
   const [transactions, setTransactions] = useState([]);
@@ -100,7 +100,7 @@ export default function Tags({ user }) {
   const dimmed = loading && hasLoaded;
 
   return (
-    <Layout username={user}>
+    <Layout>
       <div className="mb-6">
         <h2 className="text-xl font-bold text-gray-900 mb-1 dark:text-slate-100">Tagi</h2>
         <p className="text-sm text-gray-500 dark:text-slate-400">Przeglądaj i zarządzaj transakcjami według tagów (bieżący miesiąc)</p>

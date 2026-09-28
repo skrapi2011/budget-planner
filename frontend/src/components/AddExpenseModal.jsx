@@ -1,8 +1,9 @@
 import React, { useState, useEffect } from 'react';
 import { useToast } from './ToastContext';
 import { localDateStr } from '../utils/date';
+import * as api from '../api';
 
-export default function AddExpenseModal({ isOpen, onClose, onSubmit, activeCategories = [] }) {
+export default function AddExpenseModal({ isOpen, onClose, onSubmit, activeCategories = [], initial = null }) {
   // Escape closes the modal.
   useEffect(() => {
     if (!isOpen) return undefined;
@@ -35,31 +36,42 @@ export default function AddExpenseModal({ isOpen, onClose, onSubmit, activeCateg
           </svg>
         </button>
 
-        <h2 className="mb-4 text-xl font-semibold text-gray-900 dark:text-slate-100">Dodaj wydatek</h2>
+        <h2 className="mb-4 text-xl font-semibold text-gray-900 dark:text-slate-100">{initial ? 'Edytuj transakcję' : 'Dodaj wydatek'}</h2>
 
-        <Form isOpen={isOpen} categories={activeCategories} onClose={onClose} onSubmit={onSubmit} />
+        <Form isOpen={isOpen} categories={activeCategories} onClose={onClose} onSubmit={onSubmit} initial={initial} />
       </div>
     </div>
   )
 }
 
-function Form({ isOpen, categories, onClose, onSubmit }) {
+function Form({ isOpen, categories, onClose, onSubmit, initial = null }) {
   const { error: toastError } = useToast();
   const [type, setType] = useState('wydatek')
   const [amount, setAmount] = useState('')
   const [description, setDescription] = useState('')
   const [date, setDate] = useState(localDateStr())
+  const [tagsText, setTagsText] = useState('')
+  const [knownTags, setKnownTags] = useState([])
   const [categoryId, setCategoryId] = useState('')
 
   useEffect(() => {
     if (isOpen) {
-      setType('wydatek')
-      setAmount('')
-      setDescription('')
-      setDate(localDateStr())
-      setCategoryId('')
+      // Prefill from `initial` when editing, reset to defaults when adding.
+      setType(initial?.type || 'wydatek')
+      setAmount(initial?.amount != null ? String(initial.amount) : '')
+      setDescription(initial?.description || '')
+      setDate(initial?.date || localDateStr())
+      setTagsText(Array.isArray(initial?.tags) ? initial.tags.join(', ') : '')
+      setCategoryId(initial?.category_id != null ? String(initial.category_id) : '')
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [isOpen, initial])
+
+  // Suggestions for the tag field (audit P0-22: the whole tags infrastructure was
+  // unreachable from the UI because the modal had no tag input).
+  useEffect(() => {
+    if (!isOpen) return;
+    api.getAllTags().then((t) => setKnownTags(t || [])).catch(() => setKnownTags([]));
   }, [isOpen])
 
   const handleSubmit = (e) => {
@@ -70,7 +82,15 @@ function Form({ isOpen, categories, onClose, onSubmit }) {
     }
 
     const trimmedDescription = description.trim();
-    onSubmit({ type, amount: parseFloat(amount), description: trimmedDescription || null, date, categoryId })
+    const amt = parseFloat(amount);
+    // Same guard as the inline budget edit (P0-16): an empty/garbage amount used to be
+    // sent as NaN and rejected by the backend with a bare 400.
+    if (!Number.isFinite(amt) || amt <= 0) {
+      toastError('Podaj poprawną kwotę (większą od zera)');
+      return;
+    }
+    const tagsList = tagsText.split(',').map((t) => t.trim()).filter(Boolean);
+    onSubmit({ type, amount: amt, description: trimmedDescription || null, date, categoryId, tags: tagsList })
     onClose()
   }
 
@@ -79,6 +99,7 @@ function Form({ isOpen, categories, onClose, onSubmit }) {
     setAmount('')
     setDescription('')
     setDate(localDateStr())
+    setTagsText('')
     setCategoryId('')
     onClose()
   }
@@ -126,7 +147,8 @@ function Form({ isOpen, categories, onClose, onSubmit }) {
           placeholder="np. 50.00"
           step="0.01"
           min="0"
-          className="w-full px-3 py-2 border border-gray-300 dark:border-slate-600 bg-white dark:bg-slate-700 text-gray-900 dark:text-slate-100 rounded-md shadow-sm focus:outline-none focus:ring-blue-500 focus:border-blue-500"
+          required
+          className="w-full px-3 py-2 border border-gray-300 dark:border-slate-600 bg-white dark:bg-slate-700 text-gray-900 dark:text-slate-100 rounded-md shadow-sm focus:outline-none focus:ring-[#32a852] focus:border-[#32a852]"
         />
       </div>
 
@@ -140,6 +162,25 @@ function Form({ isOpen, categories, onClose, onSubmit }) {
           onChange={(e) => setDate(e.target.value)}
           className="w-full px-3 py-2 border border-gray-300 dark:border-slate-600 bg-white dark:bg-slate-700 text-gray-900 dark:text-slate-100 rounded-md shadow-sm focus:outline-none focus:ring-blue-500 focus:border-blue-500"
         />
+      </div>
+
+      {/* Tagi */}
+      <div>
+        <label htmlFor="tagi" className="block text-sm font-medium text-gray-700 dark:text-slate-300 mb-1">Tagi <span className="font-normal text-gray-400 dark:text-slate-500">(po przecinku)</span></label>
+        <input
+          type="text"
+          id="tagi"
+          value={tagsText}
+          onChange={(e) => setTagsText(e.target.value)}
+          placeholder="np. dom, zakupy"
+          list="known-tags"
+          className="w-full px-3 py-2 border border-gray-300 dark:border-slate-600 bg-white dark:bg-slate-700 text-gray-900 dark:text-slate-100 rounded-md shadow-sm focus:outline-none focus:ring-[#32a852] focus:border-[#32a852]"
+        />
+        {knownTags.length > 0 && (
+          <datalist id="known-tags">
+            {knownTags.map((t) => <option key={t} value={t} />)}
+          </datalist>
+        )}
       </div>
 
       {/* Kategoria */}
