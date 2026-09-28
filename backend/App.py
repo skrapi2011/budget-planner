@@ -63,6 +63,23 @@ def rows_to_list(rows):
     return result
 
 
+def owns_category(conn, cat_id, user_id, require_active=False):
+    """Row-level isolation guard: a write may only target a category owned by the caller.
+
+    Every Categories row belongs to exactly one user, so an un-owned category_id is
+    either a foreign user's row (cross-user write) or a dangling id that makes the
+    saved row invisible to everyone ("dead data").
+    """
+    try:
+        cid = int(cat_id)
+    except (ValueError, TypeError):
+        return False
+    sql = "SELECT id FROM Categories WHERE id=? AND user_id=?"
+    if require_active:
+        sql += " AND COALESCE(active,1)=1"
+    return conn.execute(sql, (cid, user_id)).fetchone() is not None
+
+
 def seed_categories(conn):
     _seed_categories_for_user(conn, 1)
 
@@ -432,7 +449,7 @@ def delete_category(cid):
     uid = g.current_user_id
     conn = get_connection()
     try:
-        conn.execute("DELETE FROM Budgets WHERE category_id=?", (cid,))
+        conn.execute("DELETE FROM Budgets WHERE category_id=? AND user_id=?", (cid, uid))
         conn.execute(
             "DELETE FROM Transactions WHERE user_id=? AND category_id=?",
             (uid, cid),
@@ -626,6 +643,8 @@ def create_budget():
 
     conn = get_connection()
     try:
+        if not owns_category(conn, cat_id, g.current_user_id, require_active=True):
+            return jsonify({"error": "Category not found"}), 400
         cur = conn.execute(
             "INSERT INTO Budgets (category_id, amount_monthly, month_year, user_id) VALUES (?,?,?,?)",
             (cat_id, amt, my_str, g.current_user_id),
@@ -776,6 +795,10 @@ def create_transaction():
     cat_id = data.get("category_id")
     if cat_id is None:
         return jsonify({"error": "Category ID required"}), 400
+    try:
+        cat_id = int(cat_id)
+    except (ValueError, TypeError):
+        return jsonify({"error": "Invalid category_id"}), 400
 
     description = data.get("description") or ""
 
@@ -789,6 +812,8 @@ def create_transaction():
 
     conn = get_connection()
     try:
+        if not owns_category(conn, cat_id, g.current_user_id, require_active=True):
+            return jsonify({"error": "Category not found"}), 400
         cur = conn.execute(
             """INSERT INTO Transactions (user_id, category_id, date, amount, type, description, tags)
                VALUES (?,?,?,?,?,?,?)""",
@@ -862,6 +887,10 @@ def update_transaction(tid):
                 cid = int(data["category_id"])
             except (ValueError, TypeError):
                 return jsonify({"error": "Invalid format"}), 400
+            # Ownership check (active not required: editing an existing row must keep working
+            # for categories the user has since deactivated).
+            if not owns_category(conn, cid, g.current_user_id):
+                return jsonify({"error": "Category not found"}), 400
             set_parts.append("category_id=?")
             params_final.append(cid)
 
@@ -993,8 +1022,8 @@ def month_summary_stats():
             """SELECT c.id AS cat_id, c.name, c.color, COALESCE(b.amount_monthly, 0) AS budget
                FROM Categories c
                LEFT JOIN Budgets b ON b.category_id=c.id AND b.month_year=? AND b.user_id=?
-               WHERE c.active=1""",
-            (month, g.current_user_id),
+               WHERE c.active=1 AND c.user_id=?""",
+            (month, g.current_user_id, g.current_user_id),
         ).fetchall()
 
         spend_rows = conn.execute(
@@ -1113,9 +1142,9 @@ def dashboard_data():
                       COUNT(t.id) as cnt
                FROM Categories c
                LEFT JOIN Transactions t ON t.category_id=c.id AND t.user_id=? AND t.type='wydatek'
-               WHERE c.active=1
+               WHERE c.active=1 AND c.user_id=?
                GROUP BY c.id ORDER BY total DESC LIMIT 20""",
-            (g.current_user_id,),
+            (g.current_user_id, g.current_user_id),
         ).fetchall()
 
         chart_data = []
@@ -1271,9 +1300,9 @@ def year_summary():
                   COALESCE(SUM(t.amount), 0) AS total_spend
                FROM Categories c
                LEFT JOIN Transactions t ON t.category_id=c.id AND t.user_id=? AND t.type='wydatek' AND t.date>=? AND t.date<?
-               WHERE c.active=1
+               WHERE c.active=1 AND c.user_id=?
                GROUP BY c.id""",
-            (g.current_user_id, f"{start_year}-01-01", next_year_start_date),
+            (g.current_user_id, f"{start_year}-01-01", next_year_start_date, g.current_user_id),
         ).fetchall()
 
         cr_budget_rows = conn.execute(
