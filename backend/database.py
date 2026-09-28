@@ -13,12 +13,48 @@ def get_connection():
     return conn
 
 
+def _migrate_budgets_fk(conn):
+    """Rebuild Budgets so a deleted category cascades instead of SET NULL.
+
+    The original DDL combined `NOT NULL` with `ON DELETE SET NULL`: deleting a category
+    tried to null out its budgets, which violates NOT NULL and aborts the whole delete
+    with IntegrityError (audit P0-8 — reproduced as a 500). `CREATE TABLE IF NOT EXISTS`
+    never alters an existing table, so existing databases need an explicit rebuild.
+    """
+    row = conn.execute(
+        "SELECT `sql` FROM sqlite_master WHERE type='table' AND name='Budgets'"
+    ).fetchone()
+    if not row:
+        return
+    ddl = row[0] if not isinstance(row, dict) else row["sql"]
+    if "ON DELETE CASCADE" in (ddl or ""):
+        return
+
+    conn.execute("PRAGMA foreign_keys = OFF")
+    conn.execute(
+        """CREATE TABLE Budgets_new (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            category_id INTEGER NOT NULL REFERENCES Categories(id) ON DELETE CASCADE,
+            amount_monthly REAL DEFAULT 0 CHECK(amount_monthly >= 0),
+            month_year TEXT NOT NULL,
+            user_id INTEGER NOT NULL REFERENCES Users(id) ON DELETE CASCADE,
+            UNIQUE(category_id, month_year, user_id)
+        )"""
+    )
+    conn.execute("INSERT INTO Budgets_new SELECT * FROM Budgets")
+    conn.execute("DROP TABLE Budgets")
+    conn.execute("ALTER TABLE Budgets_new RENAME TO Budgets")
+    conn.execute("PRAGMA foreign_key_check")
+    conn.execute("PRAGMA foreign_keys = ON")
+
+
 def create_tables():
     conn = get_connection()
     cursor = conn.cursor()
 
     for stmt in SCHEMA:
         cursor.execute(stmt)
+    _migrate_budgets_fk(conn)
 
     conn.commit()
     conn.close()
@@ -44,10 +80,10 @@ SCHEMA = [
 
     """CREATE TABLE IF NOT EXISTS Budgets (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
-        category_id INTEGER NOT NULL REFERENCES Categories(id) ON DELETE SET NULL,
+        category_id INTEGER NOT NULL REFERENCES Categories(id) ON DELETE CASCADE,
         amount_monthly REAL DEFAULT 0 CHECK(amount_monthly >= 0),
         month_year TEXT NOT NULL,
-        user_id INTEGER NOT NULL REFERENCES Users(id) ON DELETE SET NULL,
+        user_id INTEGER NOT NULL REFERENCES Users(id) ON DELETE CASCADE,
         UNIQUE(category_id, month_year, user_id)
     )""",
 

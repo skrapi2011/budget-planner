@@ -15,6 +15,12 @@ from flask_cors import CORS
 
 SECRET_KEY = os.environ.get("SECRET_KEY", "planowanie-wydatkow-jwt")
 
+# Audit P0-9 / P0-38: with debug=True the Werkzeug debugger is reachable over the
+# network (interactive console, PIN derived from username+PID) and every unhandled
+# exception is returned as an HTML page, which api.js cannot parse as JSON.
+# Off by default; opt in with FLASK_DEBUG=1 for local work.
+DEBUG = os.environ.get("FLASK_DEBUG", "").lower() in ("1", "true", "yes")
+
 app = Flask(__name__)
 CORS(app)
 app.config["SECRET_KEY"] = SECRET_KEY
@@ -78,6 +84,29 @@ def owns_category(conn, cat_id, user_id, require_active=False):
     if require_active:
         sql += " AND COALESCE(active,1)=1"
     return conn.execute(sql, (cid, user_id)).fetchone() is not None
+
+
+def parse_month(month):
+    """Validate a "YYYY-MM" month key; return (year, mon) ints, or None if malformed.
+
+    Unvalidated params used to blow up: "?month=abc" raised IndexError, "?month=2026-13"
+    raised ValueError — both surfaced as 500 (audit P0-10). Validate at the boundary and
+    answer 400 with JSON instead.
+    """
+    parts = (month or "").split("-", 1)
+    if len(parts) != 2 or not parts[0].isdigit() or not parts[1].isdigit():
+        return None
+    year, mon = int(parts[0]), int(parts[1])
+    if mon < 1 or mon > 12:
+        return None
+    return (year, mon)
+
+
+def month_window(year, mon):
+    """First day of year-mon and the first day of the next month, as "YYYY-MM-DD"."""
+    first = f"{year}-{mon:02d}-01"
+    nxt = datetime(year, mon, 1) + timedelta(days=32)
+    return first, f"{nxt.year}-{nxt.month:02d}-01"
 
 
 def seed_categories(conn):
@@ -215,10 +244,13 @@ def init_db():
             if not existing:
                 _seed_categories_for_user(conn, admin_id)
 
-        # Populate category ID cache once for seeding
+        # Populate category ID cache once for seeding — scoped to the demo admin.
+        # Audit P0-6: the unscoped query picked up every user's categories, so seeding
+        # attached the admin's dummy data to foreign categories.
         global CATEGORY_IDS_CACHE
         cat_rows = conn.execute(
-            "SELECT id FROM Categories ORDER BY default_order ASC"
+            "SELECT id FROM Categories WHERE user_id=? ORDER BY default_order ASC",
+            (admin_id,),
         ).fetchall()
         CATEGORY_IDS_CACHE = [[int(c["id"])] for c in cat_rows]
 
@@ -505,27 +537,29 @@ def budgets_by_month():
     if not month:
         month = datetime.now().strftime("%Y-%m")
 
+    parsed = parse_month(month)
+    if not parsed:
+        return jsonify({"error": "Invalid month parameter (expected YYYY-MM)"}), 400
+    month_key = f"{parsed[0]}-{parsed[1]:02d}"
+    first_of_month, next_first = month_window(*parsed)
+
     conn = get_connection()
     try:
-        parts = month.split("-", 1)
-        year_str, mon_str = parts[0], parts[1]
-        first_of_month = "{:s}-{:02d}-01".format(year_str, int(mon_str))
-        nxt = datetime(int(year_str), int(mon_str), 1) + timedelta(days=32)
-        next_first = nxt.strftime("%Y-%m") + "-01"
-
         budget_rows = conn.execute(
             """SELECT c.id AS cat_id, c.name, c.color, c.icon, b.id AS budget_id,
                     COALESCE(b.amount_monthly, 0) AS budzet
             FROM Categories c
             LEFT JOIN Budgets b ON b.category_id=c.id AND b.month_year=? AND b.user_id=?
             WHERE c.user_id=? AND COALESCE(c.active,1)=1""",
-            (month, g.current_user_id, g.current_user_id),
+            (month_key, g.current_user_id, g.current_user_id),
         ).fetchall()
 
+        # Audit P0-7: SUM(amount) without a type filter counted 'Przychod' as spending,
+        # so the Budgets page reported "Przekroczony" whenever income was recorded.
         spending_rows = conn.execute(
             """SELECT category_id AS cat_id, ROUND(SUM(amount), 2) AS wydatki
                FROM Transactions
-               WHERE user_id=? AND date>=? AND date<?
+               WHERE user_id=? AND type='wydatek' AND date>=? AND date<?
                GROUP BY category_id""",
             (g.current_user_id, first_of_month, next_first),
         ).fetchall()
@@ -567,27 +601,28 @@ def budgets_by_month_post():
     if not month:
         month = datetime.now().strftime("%Y-%m")
 
+    parsed = parse_month(month)
+    if not parsed:
+        return jsonify({"error": "Invalid month parameter (expected YYYY-MM)"}), 400
+    month_key = f"{parsed[0]}-{parsed[1]:02d}"
+    first_of_month, next_first = month_window(*parsed)
+
     conn = get_connection()
     try:
-        parts = month.split("-", 1)
-        year_str, mon_str = parts[0], parts[1]
-        first_of_month = "{:s}-{:02d}-01".format(year_str, int(mon_str))
-        nxt = datetime(int(year_str), int(mon_str), 1) + timedelta(days=32)
-        next_first = nxt.strftime("%Y-%m") + "-01"
-
         budget_rows = conn.execute(
             """SELECT c.id AS cat_id, c.name, c.color, c.icon, b.id AS budget_id,
                     COALESCE(b.amount_monthly, 0) AS budzet
             FROM Categories c
             LEFT JOIN Budgets b ON b.category_id=c.id AND b.month_year=? AND b.user_id=?
             WHERE c.user_id=? AND COALESCE(c.active,1)=1""",
-            (month, g.current_user_id, g.current_user_id),
+            (month_key, g.current_user_id, g.current_user_id),
         ).fetchall()
 
+        # Audit P0-7: see the GET twin above — income must not count as spending.
         spending_rows = conn.execute(
             """SELECT category_id AS cat_id, ROUND(SUM(amount), 2) AS wydatki
                FROM Transactions
-               WHERE user_id=? AND date>=? AND date<?
+               WHERE user_id=? AND type='wydatek' AND date>=? AND date<?
                GROUP BY category_id""",
             (g.current_user_id, first_of_month, next_first),
         ).fetchall()
@@ -718,11 +753,10 @@ def get_transactions():
     cat_filter = request.args.get("category")
     keyword = request.args.get("keyword")
 
-    parts = month.split("-", 1)
-    year_s, mon_s = parts[0], parts[1]
-    first_of_month = "{:s}-{:02d}-01".format(year_s, int(mon_s))
-    nxt = datetime(int(year_s), int(mon_s), 1) + timedelta(days=32)
-    next_first = nxt.strftime("%Y-%m") + "-01"
+    parsed = parse_month(month)
+    if not parsed:
+        return jsonify({"error": "Invalid month parameter (expected YYYY-MM)"}), 400
+    first_of_month, next_first = month_window(*parsed)
 
     conn = get_connection()
     try:
@@ -1010,11 +1044,11 @@ def month_summary_stats():
     if not month:
         return jsonify({"error": "Month parameter required"}), 400
 
-    parts = month.split("-", 1)
-    year_s, mon_s = parts[0], parts[1]
-    first_of_month = "{:s}-{:02d}-01".format(year_s, int(mon_s))
-    nxt = datetime(int(year_s), int(mon_s), 1) + timedelta(days=32)
-    next_first = nxt.strftime("%Y-%m") + "-01"
+    parsed = parse_month(month)
+    if not parsed:
+        return jsonify({"error": "Invalid month parameter (expected YYYY-MM)"}), 400
+    month_key = f"{parsed[0]}-{parsed[1]:02d}"
+    first_of_month, next_first = month_window(*parsed)
 
     conn = get_connection()
     try:
@@ -1023,13 +1057,14 @@ def month_summary_stats():
                FROM Categories c
                LEFT JOIN Budgets b ON b.category_id=c.id AND b.month_year=? AND b.user_id=?
                WHERE c.active=1 AND c.user_id=?""",
-            (month, g.current_user_id, g.current_user_id),
+            (month_key, g.current_user_id, g.current_user_id),
         ).fetchall()
 
+        # Audit P0-7: income was summed into expenditure here as well.
         spend_rows = conn.execute(
             """SELECT category_id AS cat_id, SUM(amount) AS expenditure
                FROM Transactions
-               WHERE user_id=? AND date>=? AND date<?
+               WHERE user_id=? AND type='wydatek' AND date>=? AND date<?
                GROUP BY category_id""",
             (g.current_user_id, first_of_month, next_first),
         ).fetchall()
@@ -1077,16 +1112,17 @@ def dashboard_data():
     month_str = (data.get("month") or "").strip()
 
     now = datetime.now()
-    current_month_start = f"{now.year}-{str(now.month).zfill(2)}-01"
-    nxt_dt = (datetime(now.year, now.month, 1) + timedelta(days=32))
-    next_month_start = f"{nxt_dt.year}-{str(nxt_dt.month).zfill(2)}-01"
+    if not month_str:
+        # Audit P0-11: the old "default to current month" branch never set year_s/mon_s,
+        # so the route 500'd with UnboundLocalError. Normalise the month up front.
+        month_str = f"{now.year}-{str(now.month).zfill(2)}"
 
-    if month_str:
-        parts_splitted = month_str.split("-", 1)
-        year_s, mon_s = parts_splitted[0], parts_splitted[1]
-        current_month_start = f"{year_s}-{mon_s}-01"
-        nxt_dt2 = datetime(int(year_s), int(mon_s), 1) + timedelta(days=32)
-        next_month_start = f"{nxt_dt2.year}-{str(nxt_dt2.month).zfill(2)}-01"
+    parsed = parse_month(month_str)
+    if not parsed:
+        return jsonify({"error": "Invalid month parameter (expected YYYY-MM)"}), 400
+    year_s, mon_s = parsed[0], parsed[1]
+    month_key = f"{year_s}-{mon_s:02d}"
+    current_month_start, next_month_start = month_window(year_s, mon_s)
 
     conn = get_connection()
     try:
@@ -1132,7 +1168,7 @@ def dashboard_data():
         current_planned_row = conn.execute(
             """SELECT COALESCE(SUM(amount_monthly), 0) AS t FROM Budgets 
                WHERE user_id=? AND amount_monthly > 0 AND month_year=?""",
-            (g.current_user_id, f"{year_s}-{mon_s}"),
+            (g.current_user_id, month_key),
         ).fetchone()
         current_planned = round(float(current_planned_row["t"]) if current_planned_row["t"] else 0, 2)
 
@@ -1368,4 +1404,4 @@ def internal_error(e):
 init_db()
 
 if __name__ == "__main__":
-    app.run(debug=True, host="127.0.0.1", port=3001)
+    app.run(debug=DEBUG, host="127.0.0.1", port=3001)
