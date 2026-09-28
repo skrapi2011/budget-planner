@@ -198,12 +198,14 @@ export default function YearOverview({ user }) {
               <p className="text-center text-gray-400 dark:text-slate-500 py-6">Brak danych.</p>
             ) : (() => {
               const maxRatio = Math.max(...category_variance.map(cv=>cv.budget > 0 ? cv.spending/cv.budget : (cv.spending > 0 ? 2 : 0)));
-              const scaleMax = Math.min(maxRatio * 1.25, 2);
+              // Same month for every category with a budget and no spending -> maxRatio = 0
+              // -> ratio/scaleMax = 0/0 = NaN -> style width:'NaN%' (audit P0-17).
+              const scaleMax = Math.max(Math.min(maxRatio * 1.25, 2), 1);
               return (
                 <div style={{ maxHeight: '180px', overflowY: 'auto' }}>
                   {category_variance.map((cv, idx) => {
                     const ratio = cv.budget > 0 ? (cv.spending / cv.budget) : (cv.spending > 0 ? scaleMax*0.9 : 0);
-                    const barPct = Math.max(5, (ratio / scaleMax) * 100);
+                    const barPct = Number.isFinite(ratio / scaleMax) ? Math.max(5, (ratio / scaleMax) * 100) : 5;
                     return (
                       <div key={idx} className="mb-3 last:mb-0">
                         <div className="flex items-center justify-between mb-2">

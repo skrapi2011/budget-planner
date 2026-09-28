@@ -127,7 +127,7 @@ export default function Dashboard({ user }) {
       <div key={monthStr} className={`page-enter max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8 transition-opacity ${loading ? 'opacity-50 pointer-events-none' : ''}`}>
       {/* Month Navigation */}
       <div className="flex items-center justify-between mb-8">
-        <button onClick={prevMonth} className="p-2 rounded-lg bg-white dark:bg-slate-800 shadow-sm hover:bg-gray-50 dark:hover:slate-700 transition-colors text-gray-600 dark:text-slate-300 border border-gray-200 dark:border-slate-700">
+        <button onClick={prevMonth} className="p-2 rounded-lg bg-white dark:bg-slate-800 shadow-sm hover:bg-gray-50 dark:hover:bg-slate-700 transition-colors text-gray-600 dark:text-slate-300 border border-gray-200 dark:border-slate-700">
           <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 19l-7-7 7-7" /></svg>
         </button>
         <div className="flex items-center gap-3">
@@ -143,7 +143,7 @@ export default function Dashboard({ user }) {
             Dziś
           </button>
         </div>
-       <button onClick={nextMonth} className="p-2 rounded-lg bg-white dark:bg-slate-800 shadow-sm hover:bg-gray-50 dark:hover:slate-700 transition-colors text-gray-600 dark:text-slate-300 border border-gray-200 dark:border-slate-700">
+       <button onClick={nextMonth} className="p-2 rounded-lg bg-white dark:bg-slate-800 shadow-sm hover:bg-gray-50 dark:hover:bg-slate-700 transition-colors text-gray-600 dark:text-slate-300 border border-gray-200 dark:border-slate-700">
           <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5l7 7-7 7" /></svg>
         </button>
       </div>
@@ -152,7 +152,7 @@ export default function Dashboard({ user }) {
       <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-6 mb-8 stagger-children">
         <StatCard label="Budżet miesięczny" value={current_planned} icon={<IconCurrent />} color="#8b5cf6" />
         <StatCard label="Wydatki w tym miesiącu" value={month_total} icon={<IconMonth />} color="#3b82f6" />
-        <StatCard2 label="Zmiana wydatków" change={changePct} absDiff={month_total - prev_month_total} monthStr={monthStr} icon={<IconChange />} color={changePct !== null ? (changePct > 0 ? '#ef4444' : '#32a852') : 'var(--tw-text-muted)'} />
+        <StatCard2 label="Zmiana wydatków" change={changePct} absDiff={month_total - prev_month_total} monthStr={monthStr} icon={<IconChange />} color={changePct !== null ? (changePct > 0 ? '#ef4444' : '#32a852') : '#94a3b8'} />
         <StatCard label="Wydatki całość" value={total_all_time} icon={<IconAllTime />} color="#ef4444" />
       </div>
 
@@ -175,15 +175,14 @@ export default function Dashboard({ user }) {
             };
 
             return (
-              <div className="flex items-center gap-6">
+              <div className="flex flex-col sm:flex-row items-center gap-6">
                 {/* Category list on the left */}
 <div 
                   style={{ 
                     maxHeight: '260px', 
-                    minWidth: '160px', 
                     overflowY: 'auto'
                   }}
-                   className="no-scrollbar space-y-2 shrink-0 rounded-xl border border-gray-300 dark:border-slate-600 p-4"
+                   className="no-scrollbar space-y-2 w-full sm:w-auto sm:min-w-[160px] min-w-0 rounded-xl border border-gray-300 dark:border-slate-600 p-4"
                 >
 {sorted.map((item) => (
                     <button
@@ -202,8 +201,8 @@ export default function Dashboard({ user }) {
                   ))}
                 </div>
                 {/* Pie chart on the right */}
-                <div className="relative shrink-0">
-                  <ResponsiveContainer width={280} height={260}>
+                <div className="relative w-full sm:w-auto sm:shrink-0">
+                  <ResponsiveContainer width="100%" height={260}>
                     <PieChart>
                       <Pie
                         data={sorted.map(c => ({ id: c.id, name: c.name, value: Number(c.expenditure) || 0, color: c.color }))}
@@ -259,7 +258,7 @@ export default function Dashboard({ user }) {
           {!monthly_history || monthly_history.length === 0 ? (
            <p className="text-center text-gray-400 dark:text-slate-500 py-12">Brak danych miesięcznych.</p>
           ) : (
-            <ResponsiveContainer width={550} height={340}>
+            <ResponsiveContainer width="100%" height={340}>
               <BarChart data={getBarChartData()} margin={{ top: 10, right: 20, left: 10, bottom: 10 }}>
                 <CartesianGrid strokeDasharray="3 3" stroke="#e5e7eb" />
                 {timeFilter === '3m' || timeFilter === '6m' ? (

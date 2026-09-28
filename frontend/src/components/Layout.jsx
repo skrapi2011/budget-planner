@@ -12,11 +12,14 @@ const navItems = [
    { to:'/year', label: 'Roczny Przegląd' },
  ]
 
-export default function Layout({ children, username }) {
+export default function Layout({ children }) {
   const [menuOpen, setMenuOpen] = useState(false)
   const location = useLocation()
   const navigate = useNavigate()
-  const { logout } = useAuth()
+  // Pages passed a `user` prop that none of them ever defined (every page is
+  // rendered as <Page /> by App.jsx), so the nav bar never showed the name.
+  // Read it from AuthContext instead (audit P0-18).
+  const { user, logout } = useAuth()
   const { isDark, toggleTheme } = useTheme()
 
   const handleLogout = async () => {
@@ -86,8 +89,8 @@ export default function Layout({ children, username }) {
                 )}
               </button>
 
-              {username && (
-                <span className="text-sm font-medium text-gray-700 hidden sm:inline dark:text-slate-300">{username}</span>
+              {user && (
+                <span className="text-sm font-medium text-gray-700 hidden sm:inline dark:text-slate-300">{user}</span>
               )}
               <button
                 type="button"

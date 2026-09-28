@@ -1,5 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { useToast } from './ToastContext';
+import { localDateStr } from '../utils/date';
 
 export default function AddExpenseModal({ isOpen, onClose, onSubmit, activeCategories = [] }) {
   // Escape closes the modal.
@@ -47,7 +48,7 @@ function Form({ isOpen, categories, onClose, onSubmit }) {
   const [type, setType] = useState('wydatek')
   const [amount, setAmount] = useState('')
   const [description, setDescription] = useState('')
-  const [date, setDate] = useState(new Date().toISOString().slice(0, 10))
+  const [date, setDate] = useState(localDateStr())
   const [categoryId, setCategoryId] = useState('')
 
   useEffect(() => {
@@ -55,7 +56,7 @@ function Form({ isOpen, categories, onClose, onSubmit }) {
       setType('wydatek')
       setAmount('')
       setDescription('')
-      setDate(new Date().toISOString().slice(0, 10))
+      setDate(localDateStr())
       setCategoryId('')
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -77,7 +78,7 @@ function Form({ isOpen, categories, onClose, onSubmit }) {
     setType('wydatek')
     setAmount('')
     setDescription('')
-    setDate(new Date().toISOString().slice(0, 10))
+    setDate(localDateStr())
     setCategoryId('')
     onClose()
   }

@@ -9,3 +9,12 @@ export function currentMonthStr() {
 export function currentYear() {
   return new Date().getFullYear();
 }
+
+// Local "YYYY-MM-DD" (Transactions.date format). toISOString() is UTC, so a user
+// entering an expense after 23:00 got yesterday's date (audit P0-19).
+export function localDateStr(d = new Date()) {
+  const y = d.getFullYear();
+  const m = String(d.getMonth() + 1).padStart(2, '0');
+  const day = String(d.getDate()).padStart(2, '0');
+  return `${y}-${m}-${day}`;
+}
