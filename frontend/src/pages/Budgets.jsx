@@ -2,14 +2,9 @@ import { useState, useEffect } from 'react';
 import Layout from '../components/Layout';
 import * as api from '../api';
 import AddBudgetModal from '../components/AddBudgetModal';
-import { currentMonthStr } from '../utils/date';
+import { currentMonthStr, monthLabel } from '../utils/date';
 import { useAnimatedValue, useCountUp } from '../hooks/animation';
 import { useToast } from '../components/ToastContext';
-
-const MONTH_NAMES = [
-  'Styczeń', 'Luty', 'Marzec', 'Kwiecień', 'Maj', 'Czerwiec',
-  'Lipiec', 'Sierpień', 'Wrzesień', 'Październik', 'Listopad', 'Grudzień'
-];
 
 // Inline edycja trzyma w stanie CIĄG (to, co user wpisuje) — parseFloat('') daje NaN,
 // który lądował w value={...} i input wyświetlał literalne „NaN" (audit P0-16).
@@ -18,8 +13,10 @@ const parseAmt = (v) => {
   return Number.isFinite(n) ? n : null;
 };
 
+// Backend status is exactly 'over_budget' | 'in_budget' (see _budgets_view); the old
+// 'przekroczony' string never reaches the frontend (audit P1-28).
 const getBarStatus = (status, pct) => {
-  if ((status === 'over_budget' || status === 'przekroczony') || pct >= 100) return { bg: 'bg-red-500', label: 'Przekroczony', color: 'text-red-600' };
+  if (status === 'over_budget' || pct >= 100) return { bg: 'bg-red-500', label: 'Przekroczony', color: 'text-red-600' };
   if (pct >= 80) return { bg: 'bg-amber-500', label: 'Uwaga', color: 'text-amber-600' };
   return { bg: 'bg-gradient-to-r from-[#32a852] to-[#4dd97a]', label: 'OK', color: 'text-[#32a852]' };
 };
@@ -105,9 +102,6 @@ export default function Budzety() {
     setMonthStr(`${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}`);
   };
 
-  const currentMonthIndex = parseInt(monthStr.split('-')[1], 10) - 1;
-  const currentYear = monthStr.split('-')[0];
-
   const totalBudget = budgets.reduce((sum, b) => sum + (Number(b.budzet) || 0), 0);
   const totalSpent = budgets.reduce((sum, b) => sum + (Number(b.wydatki) || 0), 0);
   const overallPct = totalBudget > 0 ? Math.min(100, (totalSpent / totalBudget) * 100) : 0;
@@ -140,8 +134,6 @@ export default function Budzety() {
 
   const hasMissingCategory = categories.some(c => !budgets.find(b => b.category_id === c.id));
 
-  const categoriesLoaded = categories.length > 0;
-
   const dimmed = loading && hasLoaded;
 
   return (
@@ -160,7 +152,7 @@ export default function Budzety() {
             </button>
             <div className="flex items-center gap-3">
               <h2 className="text-xl font-bold text-gray-800 dark:text-slate-100">
-                {MONTH_NAMES[currentMonthIndex]} {currentYear}
+                {monthLabel(monthStr)}
               </h2>
               <button
                 onClick={() => setMonthStr(currentMonthStr())}
@@ -347,7 +339,6 @@ export default function Budzety() {
             <AddBudgetModal
               monthStr={monthStr}
               categories={categories.filter(c => !budgets.find(b => b.category_id === c.id))}
-              categoriesLoaded={categoriesLoaded}
               onClose={() => setShowModal(false)}
               onAdded={() => loadBudgets(monthStr)}
             />

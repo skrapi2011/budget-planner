@@ -1,17 +1,13 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useCallback } from 'react';
 import { useSearchParams } from 'react-router-dom';
 import Layout from '../components/Layout';
 import AddExpenseModal from '../components/AddExpenseModal';
-import { currentMonthStr } from '../utils/date';
+import { currentMonthStr, monthLabel } from '../utils/date';
+import { formatMoney } from '../utils/money';
 import * as api from '../api';
 import { useToast } from '../components/ToastContext';
 
-const MONTH_NAMES = [
-  'Styczeń', 'Luty', 'Marzec', 'Kwiecień', 'Maj', 'Czerwiec',
-  'Lipiec', 'Sierpień', 'Wrzesień', 'Październik', 'Listopad', 'Grudzień'
-];
 
-const fmtMoney = (v) => `${(Number(v) || 0).toLocaleString('pl-PL', { minimumFractionDigits: 2, maximumFractionDigits: 2 })} zł`;
 
  export default function ExpensesView() {
   const { success, error: toastError } = useToast();
@@ -39,22 +35,10 @@ const fmtMoney = (v) => `${(Number(v) || 0).toLocaleString('pl-PL', { minimumFra
   // reloads (add/delete/month change) so the list doesn't snap shut under the cursor.
   const [expandedCategories, setExpandedCategories] = useState({});
 
-  useEffect(() => { loadExpenses(); }, [monthStr]);
-
-  // Effective category filter: user's dropdown choice wins; otherwise the
-  // ?kategoria deep-link param (validated against loaded categories).
-  const selectedCategory = (() => {
-    const raw = categoryChoice ?? (kategoriaParam && /^\d+$/.test(kategoriaParam) ? kategoriaParam : 'all');
-    if (raw === 'all') return 'all';
-    if (categories.length > 0 && !categories.some(c => String(c.id) === raw)) return 'all';
-    return raw;
-  })();
-
-  const toggleCategory = (id) => {
-    setExpandedCategories((prev) => ({ ...prev, [id]: !prev[id] }));
-  };
-
-  async function loadExpenses() {
+  // useCallback keeps the loader stable per month so the effect deps are honest
+  // (audit P1-31: exhaustive-deps warning on the fetch effect). Declared before the
+  // effect that calls it.
+  const loadExpenses = useCallback(async () => {
     setLoading(true);
     try {
       const catsPromise = api.getCategories(true).catch(() => []);
@@ -70,7 +54,25 @@ const fmtMoney = (v) => `${(Number(v) || 0).toLocaleString('pl-PL', { minimumFra
       setLoading(false);
       setHasLoaded(true);
     }
-  }
+  }, [monthStr]);
+
+  // Deferred by one microtask: setLoading(true) inside the loader is no longer a
+  // synchronous setState in the effect body (react-hooks/set-state-in-effect, audit P1-31).
+  useEffect(() => { Promise.resolve().then(loadExpenses); }, [monthStr, loadExpenses]);
+
+  // Effective category filter: user's dropdown choice wins; otherwise the
+  // ?kategoria deep-link param (validated against loaded categories).
+  const selectedCategory = (() => {
+    const raw = categoryChoice ?? (kategoriaParam && /^\d+$/.test(kategoriaParam) ? kategoriaParam : 'all');
+    if (raw === 'all') return 'all';
+    if (categories.length > 0 && !categories.some(c => String(c.id) === raw)) return 'all';
+    return raw;
+  })();
+
+  const toggleCategory = (id) => {
+    setExpandedCategories((prev) => ({ ...prev, [id]: !prev[id] }));
+  };
+
 
   const prevMonth = () => {
     const [y, m] = monthStr.split('-').map(Number);
@@ -123,10 +125,6 @@ const fmtMoney = (v) => `${(Number(v) || 0).toLocaleString('pl-PL', { minimumFra
     }
   };
 
-  const handleCancelDelete = () => {
-    setPendingDeleteId(null);
-  };
-
   const filteredByCategory = selectedCategory === 'all'
     ? transactions
     : transactions.filter(t => t.category_id === Number(selectedCategory));
@@ -172,7 +170,7 @@ const fmtMoney = (v) => `${(Number(v) || 0).toLocaleString('pl-PL', { minimumFra
         </button>
        <div className="flex items-center gap-3">
          <h2 className="text-lg font-semibold text-gray-800 dark:text-slate-200">
-            {MONTH_NAMES[parseInt(monthStr.split('-')[1], 10) - 1]} {monthStr.split('-')[0]}
+            {monthLabel(monthStr)}
           </h2>
           <button
             onClick={() => setMonthStr(currentMonthStr())}
@@ -192,15 +190,15 @@ const fmtMoney = (v) => `${(Number(v) || 0).toLocaleString('pl-PL', { minimumFra
       <div className="mb-4 grid grid-cols-2 sm:grid-cols-4 gap-3 stagger-children">
         <div className="bg-white dark:bg-slate-800 rounded-lg shadow-sm px-4 py-3">
           <p className="text-xs text-gray-500 dark:text-slate-400 mb-1">Wydatki</p>
-          <p className="text-lg font-bold text-red-500 dark:text-red-400">{fmtMoney(monthTotals.expenses)}</p>
+          <p className="text-lg font-bold text-red-500 dark:text-red-400">{formatMoney(monthTotals.expenses)}</p>
         </div>
         <div className="bg-white dark:bg-slate-800 rounded-lg shadow-sm px-4 py-3">
           <p className="text-xs text-gray-500 dark:text-slate-400 mb-1">Przychody</p>
-          <p className="text-lg font-bold text-[#32a852]">{fmtMoney(monthTotals.income)}</p>
+          <p className="text-lg font-bold text-[#32a852]">{formatMoney(monthTotals.income)}</p>
         </div>
         <div className="bg-white dark:bg-slate-800 rounded-lg shadow-sm px-4 py-3">
           <p className="text-xs text-gray-500 dark:text-slate-400 mb-1">Bilans</p>
-          <p className={`text-lg font-bold ${(monthTotals.income - monthTotals.expenses) >= 0 ? 'text-[#32a852]' : 'text-red-500 dark:text-red-400'}`}>{fmtMoney(monthTotals.income - monthTotals.expenses)}</p>
+          <p className={`text-lg font-bold ${(monthTotals.income - monthTotals.expenses) >= 0 ? 'text-[#32a852]' : 'text-red-500 dark:text-red-400'}`}>{formatMoney(monthTotals.income - monthTotals.expenses)}</p>
         </div>
         <div className="bg-white dark:bg-slate-800 rounded-lg shadow-sm px-4 py-3">
           <p className="text-xs text-gray-500 dark:text-slate-400 mb-1">Transakcje</p>
@@ -306,7 +304,7 @@ const fmtMoney = (v) => `${(Number(v) || 0).toLocaleString('pl-PL', { minimumFra
       )}
       </div>
 
-      <AddExpenseModal isOpen={modalOpen} onClose={closeModal} onSubmit={handleAddExpense} activeCategories={categories} initial={editingTx} />
+      <AddExpenseModal key={`${modalOpen}-${editingTx?.id ?? 'add'}`} isOpen={modalOpen} onClose={closeModal} onSubmit={handleAddExpense} activeCategories={categories} initial={editingTx} />
     </Layout>
   );
 }

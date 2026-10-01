@@ -1,6 +1,19 @@
 // Shared date helpers (month strings are "YYYY-MM", local time — never toISOString,
 // which is UTC and can shift the month around midnight/timezone borders).
 
+// Polish month names, in calendar order. Duplicated across 4 pages before audit P1-30.
+export const MONTH_NAMES = [
+  'Styczeń', 'Luty', 'Marzec', 'Kwiecień', 'Maj', 'Czerwiec',
+  'Lipiec', 'Sierpień', 'Wrzesień', 'Październik', 'Listopad', 'Grudzień'
+];
+
+// "YYYY-MM" -> "Wrzesień 2026" (index is 1-based in the month string).
+export function monthLabel(monthStr) {
+  const [y, m] = String(monthStr).split('-').map(Number);
+  if (!y || !m || m < 1 || m > 12) return monthStr;
+  return `${MONTH_NAMES[m - 1]} ${y}`;
+}
+
 export function currentMonthStr() {
   const d = new Date();
   return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`;

@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useCallback } from 'react';
 let darkMQ = typeof window !== 'undefined' ? window.matchMedia('(prefers-color-scheme: dark)') : null;
 function useDark() {
   const [dark, setDark] = useState(darkMQ?.matches ?? false);
@@ -13,15 +13,11 @@ function useDark() {
 import { useNavigate } from 'react-router-dom';
 import Layout from '../components/Layout';
 import AddExpenseModal from '../components/AddExpenseModal';
-import { currentMonthStr } from '../utils/date';
+import { currentMonthStr, monthLabel } from '../utils/date';
+import { formatMoney } from '../utils/money';
 import { useAnimatedValue, useCountUp } from '../hooks/animation';
 import * as api from '../api';
 import { PieChart, Pie, Cell, BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, Legend, ResponsiveContainer } from 'recharts';
-
-const MONTH_NAMES = [
-  'Styczeń', 'Luty', 'Marzec', 'Kwiecień', 'Maj', 'Czerwiec',
-  'Lipiec', 'Sierpień', 'Wrzesień', 'Październik', 'Listopad', 'Grudzień'
-];
 
 const GREEN = '#32a852';
 
@@ -40,9 +36,10 @@ export default function Dashboard() {
   const isDark = useDark();
   const navigate = useNavigate();
 
-  useEffect(() => { loadDashboard(); }, [monthStr]);
-
-  async function loadDashboard() {
+  // useCallback keeps the loader stable per month so the effect deps are honest
+  // (audit P1-31: exhaustive-deps warning on the fetch effect). Declared before the
+  // effect that calls it.
+  const loadDashboard = useCallback(async () => {
     setLoading(true);
     try {
       const [data, rawBudgets, catList] = await Promise.all([
@@ -71,7 +68,11 @@ export default function Dashboard() {
     } finally {
       setLoading(false);
     }
-  }
+  }, [monthStr]);
+
+  // Deferred by one microtask: setLoading(true) inside the loader is no longer a
+  // synchronous setState in the effect body (react-hooks/set-state-in-effect, audit P1-31).
+  useEffect(() => { Promise.resolve().then(loadDashboard); }, [monthStr, loadDashboard]);
 
   const handleAddExpense = async (data) => {
     await api.addTransaction(data);
@@ -106,13 +107,7 @@ export default function Dashboard() {
     return <Layout><div className="flex items-center justify-center py-24"><div className="w-10 h-10 border-4 border-gray-200 dark:border-slate-700 border-t-[#32a852] rounded-full animate-spin" /></div></Layout>;
   }
 
-  const { total_all_time = 0, prev_month_total = 0, month_total = 0, planned_all_time = 0, current_planned = 0, chart_data = [], monthly_history = [] } = dashData;
-
-  function getPrevMonthLabel() {
-    const [y, m] = monthStr.split('-').map(Number);
-    if (m === 1) return `${MONTH_NAMES[11]} ${y - 1}`;
-    return MONTH_NAMES[m - 2];
-  }
+  const { total_all_time = 0, prev_month_total = 0, month_total = 0, current_planned = 0, monthly_history = [] } = dashData;
 
   function getChangePct(current, previous) {
     if ((previous ?? 0) === 0) return current > 0 ? null : 0;
@@ -132,7 +127,7 @@ export default function Dashboard() {
         </button>
         <div className="flex items-center gap-3">
           <h2 className="text-xl font-bold text-gray-800 dark:text-slate-200">
-            {MONTH_NAMES[parseInt(monthStr.split('-')[1], 10) - 1]} {monthStr.split('-')[0]}
+            {monthLabel(monthStr)}
           </h2>
           <button
             onClick={() => setMonthStr(currentMonthStr())}
@@ -290,7 +285,7 @@ export default function Dashboard() {
       </Card>
       </div>
 
-      <AddExpenseModal isOpen={modalOpen} onClose={() => setModalOpen(false)} onSubmit={handleAddExpense} activeCategories={activeCategories} />
+      <AddExpenseModal key={`add-${modalOpen}`} isOpen={modalOpen} onClose={() => setModalOpen(false)} onSubmit={handleAddExpense} activeCategories={activeCategories} />
 
 
       {/* Floating add button */}
@@ -315,11 +310,10 @@ function Card({ title, children }) {
   );
 }
 
-function StatCard({ label, value, icon, color, badge }) {
+function StatCard({ label, value, icon, color }) {
   const animated = useCountUp(value);
   return (
      <div className="bg-white dark:bg-slate-800 rounded-xl shadow-sm hover:shadow-md transition-shadow p-5 relative overflow-hidden">
-       {badge && <span className="absolute top-3 right-4 text-xs font-medium bg-gray-100 dark:bg-slate-700 text-gray-600 dark:text-slate-300 px-2 py-0.5 rounded-full">{badge}</span>}
        <div className="flex items-center gap-3 mb-3">
          <div style={{ backgroundColor: color + '20' }} className="w-10 h-10 rounded-lg flex items-center justify-center shrink-0">
            {icon}
@@ -334,15 +328,14 @@ function StatCard({ label, value, icon, color, badge }) {
 
 
 function StatCard2({ label, change, absDiff: propAbsDiff, monthStr: ms, icon, color: arrowColor }) {
-  const [prevLabel, setPrevLabel] = useState('');
-
-  useEffect(() => {
-    if (!ms) return;
+  // Pure derivation of ms — no state/effect needed (audit P1-31: setState in effect).
+  const prevLabel = (() => {
+    if (!ms) return '';
     const [y, m] = ms.split('-').map(Number);
-    let py, pm;
-    if (m === 1) { py = y - 1; pm = 12; } else { py = y; pm = m - 1; }
-    setPrevLabel(`${MONTH_NAMES[pm - 1]} ${py}`);
- }, [ms]);
+    const py = m === 1 ? y - 1 : y;
+    const pm = m === 1 ? 12 : m - 1;
+    return monthLabel(`${py}-${String(pm).padStart(2, '0')}`);
+  })();
 
   const absDiffRaw = Number(propAbsDiff) || 0;
   const animatedDiff = useCountUp(absDiffRaw);
@@ -358,7 +351,7 @@ function StatCard2({ label, change, absDiff: propAbsDiff, monthStr: ms, icon, co
       </div>
 
       <p className="text-xs text-gray-500 dark:text-slate-400 mb-2">
-        {ms ? MONTH_NAMES[parseInt(ms.split('-')[1], 10) - 1] : ''} vs {prevLabel || '—'}
+        {ms ? monthLabel(ms).split(' ')[0] : ''} vs {prevLabel || '—'}
       </p>
 
       <div className="flex items-baseline gap-3 flex-wrap">
@@ -432,11 +425,6 @@ function IconAllTime() { return <svg className="w-5 h-5 text-[#ef4444]" fill="no
 function IconMonth() { return <svg className="w-5 h-5 text-[#3b82f6]" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.8} d="M8 7V3m8 4V3m-9 8h10M5 21h14a2 2 0 000-4H5a2 2 0 000 4z" /></svg>; }
 function IconCurrent() { return <svg className="w-5 h-5 text-[#8b5cf6]" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.8} d="M12 8c-3.866 0-7 1.567-7 3.5V14a2 2 0 002 2h2v-2.5m14 0H9" /></svg>; }
 function IconChange() { return <svg className="w-5 h-5 text-[#f59e0b]" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.8} d="M7 16V4m0 0L3 8m4-4l4 4m6 0v12m0 0l4-4m-4 4l-4-4" /></svg>; }
-
-function formatMoney(v) {
-  v = Number(v || 0);
-  return `${v.toLocaleString('pl-PL', { minimumFractionDigits: 2, maximumFractionDigits: 2 })} zł`;
-}
 
 function CustomTooltip({ active, payload }) {
   if (!active || !payload?.length) return null;
