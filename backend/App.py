@@ -32,14 +32,14 @@ def require_auth(f):
     def decorated(*args, **kwargs):
         auth_header = request.headers.get("Authorization", "")
         if not auth_header.startswith("Bearer "):
-            return jsonify({"error": "Missing or invalid token"}), 401
+            return jsonify({"error": "Brak lub nieprawidłowy token"}), 401
         token = auth_header.split(" ", 1)[1]
         try:
             payload = __decode_jwt(token)
             g.current_user_id = payload["user_id"]
             g.current_username = payload["username"]
         except Exception:
-            return jsonify({"error": "Invalid or expired token"}), 401
+            return jsonify({"error": "Nieprawidłowy lub wygasły token"}), 401
         return f(*args, **kwargs)
     return decorated
 
@@ -108,6 +108,22 @@ def month_window(year, mon):
     first = f"{year}-{mon:02d}-01"
     nxt = datetime(year, mon, 1) + timedelta(days=32)
     return first, f"{nxt.year}-{nxt.month:02d}-01"
+
+
+def normalize_date(raw):
+    """Return a canonical "YYYY-MM-DD", or None if the value is not a real date.
+
+    `datetime.strptime("2026-5-15", "%Y-%m-%d")` accepts non-zero-padded input, so the row was
+    stored as "2026-5-15". Dates are compared as strings in every month window
+    (`date>=? AND date<?`) and in `ORDER BY t.date DESC`, so an unpadded value sorts between
+    May and December: `"2026-5-15" > "2026-12-01"` is True. Normalise at the write boundary so
+    the column always has the format the format contract (AGENTS.md §5) promises.
+    """
+    s = (raw or "").strip()
+    try:
+        return datetime.strptime(s, "%Y-%m-%d").strftime("%Y-%m-%d")
+    except (ValueError, TypeError):
+        return None
 
 
 def normalize_tags(raw):
@@ -333,11 +349,11 @@ def register():
     password = data.get("password") or ""
     confirm_password = data.get("confirmPassword") or ""
     if not username:
-        return jsonify({"error": "Username required"}), 400
+        return jsonify({"error": "Nazwa użytkownika jest wymagana"}), 400
     if len(password) < 4:
-        return jsonify({"error": "Password must be at least 4 characters"}), 400
+        return jsonify({"error": "Hasło musi mieć co najmniej 4 znaki"}), 400
     if password != confirm_password:
-        return jsonify({"error": "Passwords do not match"}), 400
+        return jsonify({"error": "Hasła nie są identyczne"}), 400
 
     conn = get_connection()
     try:
@@ -345,7 +361,7 @@ def register():
             "SELECT id FROM Users WHERE username=?", (username,)
         ).fetchone()
         if existing:
-            return jsonify({"error": "User already exists"}), 409
+            return jsonify({"error": "Taki użytkownik już istnieje"}), 409
 
         pwd_hash = generate_password_hash(password)
         cur = conn.execute(
@@ -359,7 +375,7 @@ def register():
         return jsonify({"token": token, "username": username}), 201
     except sqlite3.IntegrityError:
         conn.rollback()
-        return jsonify({"error": "User already exists"}), 409
+        return jsonify({"error": "Taki użytkownik już istnieje"}), 409
     finally:
         conn.close()
 
@@ -377,7 +393,7 @@ def login():
             (username,),
         ).fetchone()
         if not user or not check_password_hash(user["password_hash"], password):
-            return jsonify({"error": "Bad username/password"}), 401
+            return jsonify({"error": "Nieprawidłowa nazwa użytkownika lub hasło"}), 401
 
         token = generate_token(user["id"], username)
         return jsonify({"token": token, "username": username}), 200
@@ -451,7 +467,11 @@ def get_active_categories():
                 "color": r["color"],
                 "icon": r["icon"],
                 "default_order": r["default_order"],
-                "active": 1,
+                # Serialised as a bool, exactly like GET /api/categories. It used to be the raw
+                # int 1, so the same field had two shapes depending on which endpoint the caller
+                # used (api.getCategories(true) hits this one). CategoriesView copes with both,
+                # but one contract should have one shape.
+                "active": r["active"] == 1,
                 "user_id": r["user_id"],
             })
         return jsonify(cats), 200
@@ -465,7 +485,7 @@ def create_category():
     data = request.get_json(silent=True) or {}
     name = (data.get("name") or "").strip()
     if not name:
-        return jsonify({"error": "Name required"}), 400
+        return jsonify({"error": "Nazwa kategorii jest wymagana"}), 400
 
     color = (data.get("color") or "").strip()
     icon = data.get("icon", "\U0001f4c1")
@@ -476,12 +496,12 @@ def create_category():
         # (user_id, name)), so duplicates were accepted with 201.
         dup = find_duplicate_category(conn, g.current_user_id, name)
         if dup:
-            return jsonify({"error": f"Category „{dup['name']}” already exists"}), 409
+            return jsonify({"error": f"Kategoria „{dup['name']}” już istnieje"}), 409
         raw_color = color
         color, color_ok = normalize_color(raw_color)
         if not color_ok and raw_color:
             # Empty color is silently defaulted; an explicit non-hex value is rejected.
-            return jsonify({"error": "Color must be a hex value like #e74c3c"}), 400
+            return jsonify({"error": "Kolor musi być wartością hex, np. #e74c3c"}), 400
         cur = conn.execute(
             "INSERT INTO Categories (name, color, icon, user_id) VALUES (?,?,?,?)",
             (name, color, icon, g.current_user_id),
@@ -501,7 +521,7 @@ def create_category():
         }), 201
     except sqlite3.IntegrityError:
         conn.rollback()
-        return jsonify({"error": "Category already exists"}), 409
+        return jsonify({"error": "Kategoria już istnieje"}), 409
     finally:
         conn.close()
 
@@ -517,22 +537,22 @@ def update_category(cid):
             (cid, g.current_user_id),
         ).fetchone()
         if not existing:
-            return jsonify({"error": "Not found"}), 404
+            return jsonify({"error": "Nie znaleziono kategorii"}), 404
 
         # Audit P1-27: renaming onto an existing category name was allowed.
         if data.get("name") is not None:
             new_name = str(data["name"]).strip()
             if not new_name:
-                return jsonify({"error": "Name required"}), 400
+                return jsonify({"error": "Nazwa kategorii jest wymagana"}), 400
             dup = find_duplicate_category(conn, g.current_user_id, new_name, exclude_id=cid)
             if dup:
-                return jsonify({"error": f"Category „{dup['name']}” already exists"}), 409
+                return jsonify({"error": f"Kategoria „{dup['name']}” już istnieje"}), 409
             data["name"] = new_name
 
         if data.get("color") is not None:
             norm, color_ok = normalize_color(data["color"])
             if not color_ok:
-                return jsonify({"error": "Color must be a hex value like #e74c3c"}), 400
+                return jsonify({"error": "Kolor musi być wartością hex, np. #e74c3c"}), 400
             data["color"] = norm
 
         up_keys = ["name", "color", "icon", "default_order", "active"]
@@ -544,7 +564,7 @@ def update_category(cid):
                 params.append(data[k])
 
         if not set_clauses:
-            return jsonify({"error": "No valid fields to update"}), 400
+            return jsonify({"error": "Brak pola do aktualizacji"}), 400
 
         query_text = "UPDATE Categories SET " + ", ".join(set_clauses) + " WHERE id=? AND user_id=?"
         params.extend([cid, g.current_user_id])
@@ -571,6 +591,13 @@ def delete_category(cid):
     uid = g.current_user_id
     conn = get_connection()
     try:
+        # Audit P1-47: the deletes are scoped by user_id, so a foreign id removed nothing,
+        # but the route answered 200 {"success": true} — a false success. PUT on the same
+        # path answers 404, so align them.
+        if not conn.execute(
+            "SELECT id FROM Categories WHERE id=? AND user_id=?", (cid, uid)
+        ).fetchone():
+            return jsonify({"error": "Nie znaleziono kategorii"}), 404
         conn.execute("DELETE FROM Budgets WHERE category_id=? AND user_id=?", (cid, uid))
         conn.execute(
             "DELETE FROM Transactions WHERE user_id=? AND category_id=?",
@@ -648,7 +675,7 @@ def budgets_by_month_post():
 
     parsed = parse_month(month)
     if not parsed:
-        return jsonify({"error": "Invalid month parameter (expected YYYY-MM)"}), 400
+        return jsonify({"error": "Nieprawidłowy parametr miesiąca (oczekiwano YYYY-MM)"}), 400
     month_key = f"{parsed[0]}-{parsed[1]:02d}"
 
     conn = get_connection()
@@ -667,21 +694,21 @@ def create_budget():
     my_str = (data.get("month_year") or "").strip()
 
     if cat_id is None or amt is None or not my_str:
-        return jsonify({"error": "Missing required fields"}), 400
+        return jsonify({"error": "Brak wymaganych pól"}), 400
 
     try:
         cat_id = int(cat_id)
         amt = float(amt)
     except (ValueError, TypeError):
-        return jsonify({"error": "Invalid format"}), 400
+        return jsonify({"error": "Nieprawidłowy format"}), 400
 
     if amt < 0:
-        return jsonify({"error": "amount_monthly cannot be negative"}), 400
+        return jsonify({"error": "Kwota budżetu nie może być ujemna"}), 400
 
     conn = get_connection()
     try:
         if not owns_category(conn, cat_id, g.current_user_id, require_active=True):
-            return jsonify({"error": "Category not found"}), 400
+            return jsonify({"error": "Nie znaleziono kategorii"}), 400
         cur = conn.execute(
             "INSERT INTO Budgets (category_id, amount_monthly, month_year, user_id) VALUES (?,?,?,?)",
             (cat_id, amt, my_str, g.current_user_id),
@@ -699,7 +726,7 @@ def create_budget():
             return jsonify({"success": True}), 200
         except Exception:
             conn.rollback()
-            return jsonify({"error": "Update failed"}), 500
+            return jsonify({"error": "Aktualizacja nie powiodła się"}), 500
     finally:
         conn.close()
 
@@ -714,9 +741,9 @@ def update_budget(bid):
         try:
             amt = float(data.get("amount", data.get("amount_monthly")))
         except (ValueError, TypeError):
-            return jsonify({"error": "Invalid format"}), 400
+            return jsonify({"error": "Nieprawidłowy format"}), 400
         if amt < 0:
-            return jsonify({"error": "amount cannot be negative"}), 400
+            return jsonify({"error": "Kwota nie może być ujemna"}), 400
 
     conn = get_connection()
     try:
@@ -725,7 +752,7 @@ def update_budget(bid):
             (bid, g.current_user_id),
         ).fetchone()
         if not existing:
-            return jsonify({"error": "Not found"}), 401
+            return jsonify({"error": "Nie znaleziono budżetu"}), 401
 
         set_parts = []
         params_final = []
@@ -736,10 +763,30 @@ def update_budget(bid):
         params_final.extend([bid, g.current_user_id])
 
         if not set_parts:
-            return jsonify({"error": "No valid fields to update"}), 400
+            return jsonify({"error": "Brak pola do aktualizacji"}), 400
 
         query_text = "UPDATE Budgets SET " + ", ".join(set_parts) + " WHERE id=? AND user_id=?"
         conn.execute(query_text, params_final)
+        conn.commit()
+        return jsonify({"success": True}), 200
+    finally:
+        conn.close()
+
+
+@app.route("/api/budgets/<int:bid>", methods=["DELETE"])
+@require_auth
+def delete_budget(bid):
+    """Delete one budget row. Audit P1-48: this route did not exist, so a budget could only
+    be zeroed and DELETE on the path answered 405. Uses 404 (not the PUT route's 401 quirk,
+    which AGENTS.md §6.3 records as a legacy inconsistency).
+    """
+    conn = get_connection()
+    try:
+        if not conn.execute(
+            "SELECT id FROM Budgets WHERE id=? AND user_id=?", (bid, g.current_user_id)
+        ).fetchone():
+            return jsonify({"error": "Nie znaleziono budżetu"}), 404
+        conn.execute("DELETE FROM Budgets WHERE id=? AND user_id=?", (bid, g.current_user_id))
         conn.commit()
         return jsonify({"success": True}), 200
     finally:
@@ -762,7 +809,7 @@ def get_transactions():
     else:
         parsed = parse_month(month)
         if not parsed:
-            return jsonify({"error": "Invalid month parameter (expected YYYY-MM)"}), 400
+            return jsonify({"error": "Nieprawidłowy parametr miesiąca (oczekiwano YYYY-MM)"}), 400
         date_range = month_window(*parsed)
 
     conn = get_connection()
@@ -818,43 +865,42 @@ def create_transaction():
     txn_type = (data.get("type") or "").strip()
 
     if txn_type not in ("wydatek", "Przychod"):
-        return jsonify({"error": "Type must be wydatek or Przychod"}), 400
+        return jsonify({"error": "Typ musi być „wydatek” lub „Przychod”"}), 400
 
     try:
         amt = float(data["amount"])
     except (ValueError, TypeError, KeyError):
-        return jsonify({"error": "Amount is required and must be positive"}), 400
+        return jsonify({"error": "Kwota jest wymagana i musi być dodatnia"}), 400
 
     if amt <= 0:
-        return jsonify({"error": "Amount must be greater than 0"}), 400
+        return jsonify({"error": "Kwota musi być większa od zera"}), 400
 
     date_str = (data.get("date") or "").strip()
     if not date_str:
-        return jsonify({"error": "Date is required"}), 400
-    try:
-        datetime.strptime(date_str, "%Y-%m-%d")
-    except ValueError:
-        return jsonify({"error": "Invalid format"}), 400
+        return jsonify({"error": "Data jest wymagana"}), 400
+    date_str = normalize_date(date_str)
+    if date_str is None:
+        return jsonify({"error": "Nieprawidłowy format"}), 400
 
     cat_id = data.get("category_id")
     if cat_id is None:
-        return jsonify({"error": "Category ID required"}), 400
+        return jsonify({"error": "ID kategorii jest wymagane"}), 400
     try:
         cat_id = int(cat_id)
     except (ValueError, TypeError):
-        return jsonify({"error": "Invalid category_id"}), 400
+        return jsonify({"error": "Nieprawidłowe ID kategorii"}), 400
 
     description = data.get("description") or ""
 
     tags_raw = data.get("tags", [])
     tags_json_val = normalize_tags(tags_raw)
     if tags_json_val is None:
-        return jsonify({"error": "tags must be a JSON array of strings"}), 400
+        return jsonify({"error": "Tagi muszą być tablicą JSON tekstów"}), 400
 
     conn = get_connection()
     try:
         if not owns_category(conn, cat_id, g.current_user_id, require_active=True):
-            return jsonify({"error": "Category not found"}), 400
+            return jsonify({"error": "Nie znaleziono kategorii"}), 400
         cur = conn.execute(
             """INSERT INTO Transactions (user_id, category_id, date, amount, type, description, tags)
                VALUES (?,?,?,?,?,?,?)""",
@@ -892,7 +938,7 @@ def update_transaction(tid):
             (tid, g.current_user_id),
         ).fetchone()
         if not existing:
-            return jsonify({"error": "Not found"}), 403
+            return jsonify({"error": "Nie znaleziono transakcji"}), 403
 
         set_parts = []
         params_final = []
@@ -900,7 +946,7 @@ def update_transaction(tid):
         if "type" in data:
             txn_type_val = data["type"]
             if txn_type_val not in ("wydatek", "Przychod"):
-                return jsonify({"error": "Type must be wydatek or Przychod"}), 400
+                return jsonify({"error": "Typ musi być „wydatek” lub „Przychod”"}), 400
             set_parts.append("type=?")
             params_final.append(txn_type_val)
 
@@ -908,18 +954,16 @@ def update_transaction(tid):
             try:
                 amt_val = float(data["amount"])
             except (ValueError, TypeError):
-                return jsonify({"error": "Invalid format"}), 400
+                return jsonify({"error": "Nieprawidłowy format"}), 400
             if amt_val <= 0:
-                return jsonify({"error": "Amount must be greater than 0"}), 400
+                return jsonify({"error": "Kwota musi być większa od zera"}), 400
             set_parts.append("amount=?")
             params_final.append(amt_val)
 
         if "date" in data:
-            dstr = data["date"]
-            try:
-                datetime.strptime(dstr, "%Y-%m-%d")
-            except ValueError:
-                return jsonify({"error": "Invalid format"}), 400
+            dstr = normalize_date(data["date"])
+            if dstr is None:
+                return jsonify({"error": "Nieprawidłowy format"}), 400
             set_parts.append("date=?")
             params_final.append(dstr)
 
@@ -927,11 +971,11 @@ def update_transaction(tid):
             try:
                 cid = int(data["category_id"])
             except (ValueError, TypeError):
-                return jsonify({"error": "Invalid format"}), 400
+                return jsonify({"error": "Nieprawidłowy format"}), 400
             # Ownership check (active not required: editing an existing row must keep working
             # for categories the user has since deactivated).
             if not owns_category(conn, cid, g.current_user_id):
-                return jsonify({"error": "Category not found"}), 400
+                return jsonify({"error": "Nie znaleziono kategorii"}), 400
             set_parts.append("category_id=?")
             params_final.append(cid)
 
@@ -942,12 +986,12 @@ def update_transaction(tid):
         if "tags" in data:
             tags_json_val = normalize_tags(data["tags"])
             if tags_json_val is None:
-                return jsonify({"error": "tags must be a JSON array of strings"}), 400
+                return jsonify({"error": "Tagi muszą być tablicą JSON tekstów"}), 400
             set_parts.append("tags=?")
             params_final.append(tags_json_val)
 
         if not set_parts:
-            return jsonify({"error": "No fields to update"}), 400
+            return jsonify({"error": "Brak pola do aktualizacji"}), 400
 
         query_text = "UPDATE Transactions SET " + ", ".join(set_parts) + " WHERE id=? AND user_id=?"
         params_final.extend([tid, g.current_user_id])
@@ -969,7 +1013,7 @@ def delete_transaction(tid):
             (tid, uid),
         ).fetchone()
         if not chk:
-            return jsonify({"error": "Not found"}), 403
+            return jsonify({"error": "Nie znaleziono transakcji"}), 403
 
         conn.execute("DELETE FROM Transactions WHERE id=?", (tid,))
         conn.commit()
@@ -984,10 +1028,13 @@ def get_all_tags():
     conn = get_connection()
     try:
         try:
+            # json_type()='array' is not decoration: json_each() on a JSON *object* succeeds and
+            # yields its values, so a legacy row holding '{"a":1}' surfaced `1` (an int) as a tag
+            # name. The write boundary rejects objects, so only pre-validation rows can hit this.
             rows = conn.execute(
                 """SELECT DISTINCT json_each.value AS tag_name
                    FROM Transactions, json_each(Transactions.tags)
-                   WHERE Transactions.user_id=?""",
+                   WHERE Transactions.user_id=? AND json_type(Transactions.tags)='array'""",
                 (g.current_user_id,),
             ).fetchall()
         except sqlite3.OperationalError:
@@ -1055,7 +1102,7 @@ def rename_tag(tag):
     data = request.get_json(silent=True) or {}
     new_name = (data.get("new_name") or "").strip()
     if not new_name:
-        return jsonify({"error": "new_name is required"}), 400
+        return jsonify({"error": "Nowa nazwa tagu jest wymagana"}), 400
     conn = get_connection()
     try:
         # dict.fromkeys keeps order and dedups: renaming "a"->"b" in a transaction that
@@ -1086,7 +1133,7 @@ def dashboard_data():
 
     parsed = parse_month(month_str)
     if not parsed:
-        return jsonify({"error": "Invalid month parameter (expected YYYY-MM)"}), 400
+        return jsonify({"error": "Nieprawidłowy parametr miesiąca (oczekiwano YYYY-MM)"}), 400
     year_s, mon_s = parsed[0], parsed[1]
     month_key = f"{year_s}-{mon_s:02d}"
     current_month_start, next_month_start = month_window(year_s, mon_s)
@@ -1105,12 +1152,10 @@ def dashboard_data():
         ).fetchone()
         month_spending = round(float(month_rows["t"]) if month_rows["t"] else 0, 2)
 
-        planned_row_all_time = conn.execute(
-            """SELECT COALESCE(SUM(amount_monthly), 0) AS t FROM Budgets 
-               WHERE user_id=? AND amount_monthly > 0""",
-            (g.current_user_id,),
-        ).fetchone()
-        planned_total_all_time = round(float(planned_row_all_time["t"]) if planned_row_all_time["t"] else 0, 2)
+        # Audit P1-46: `planned_all_time` and `chart_data` were computed here and never read
+        # by the frontend (Dashboard uses total_all_time / month_total / prev_month_total /
+        # current_planned / monthly_history, and the budget bars come from
+        # POST /api/budgets/by-month-post). Both queries removed.
 
         # Previous month spending for comparison
         prev_first_month = int(mon_s) == 1
@@ -1139,32 +1184,15 @@ def dashboard_data():
         ).fetchone()
         current_planned = round(float(current_planned_row["t"]) if current_planned_row["t"] else 0, 2)
 
-        # Per-category breakdown for chart (all time by category with colors)
-        cat_trend_rows = conn.execute(
-            """SELECT c.name, c.color, COALESCE(SUM(t.amount), 0) AS total,
-                      COUNT(t.id) as cnt
-               FROM Categories c
-               LEFT JOIN Transactions t ON t.category_id=c.id AND t.user_id=? AND t.type='wydatek'
-               WHERE c.active=1 AND c.user_id=?
-               GROUP BY c.id ORDER BY total DESC LIMIT 20""",
-            (g.current_user_id, g.current_user_id),
-        ).fetchall()
-
-        chart_data = []
-        for cr in cat_trend_rows:
-            if cr["total"] > 0:
-                chart_data.append({
-                    "name": cr["name"],
-                    "color": cr["color"],
-                    "value": round(float(cr["total"]), 2),
-                })
-
         # Historical monthly data (past 12 months + current)
         year_month_list = []
         for m_off in range(13):
             base_year = now.year + (now.month - 1 - m_off) // 12
             base_mon = ((now.month - 1 - m_off) % 12) + 1
-            year_month_list.append((base_year, base_mon, calendar.month_name[base_mon]))
+            # Polish labels: the Dashboard renders these on the history chart, and the
+            # surrounding cards use monthLabel() from utils/date.js. calendar.month_name
+            # gave "October 26" in an otherwise Polish UI (audit P1-46).
+            year_month_list.append((base_year, base_mon, MONTH_NAMES_PL[base_mon - 1]))
 
         # Audit P1-33: this loop used to run 2 queries per month (26 per request).
         # One grouped query per table covers the whole 13-month window.
@@ -1209,9 +1237,7 @@ def dashboard_data():
                 "total_all_time": total_spending_all_time,
                 "month_total": month_spending,
                 "prev_month_total": prev_month_spending,
-                "planned_all_time": planned_total_all_time,
                 "current_planned": current_planned,
-                "chart_data": chart_data,
                 "monthly_history": months_history,
             }), 200
     finally:
@@ -1223,9 +1249,11 @@ def dashboard_data():
 @require_auth
 def year_summary():
     data = request.get_json(silent=True) or {}
-    year_str = (data.get("year") or "").strip()
+    # str() before .strip(): the frontend sends String(year), so an int year raised
+    # AttributeError -> 500. The contract accepts both shapes.
+    year_str = str(data.get("year") or "").strip()
     if not year_str or not str(year_str).isdigit():
-        return jsonify({"error": "Year parameter required"}), 400
+        return jsonify({"error": "Parametr roku jest wymagany"}), 400
 
     conn = get_connection()
     try:
@@ -1373,12 +1401,20 @@ def year_summary():
 
 @app.errorhandler(404)
 def not_found(e):
-    return jsonify({"error": "Not found"}), 404
+    return jsonify({"error": "Nie znaleziono zasobu"}), 404
+
+
+@app.errorhandler(405)
+def method_not_allowed(e):
+    # AGENTS.md §6.1: errors are JSON. Without this handler Flask answers an HTML 405, which
+    # `api.js` cannot read (`data.error` is undefined → the toast shows "undefined").
+    # Reached by GET on POST-only routes, e.g. /api/budgets/by-month-post (audit P0-25).
+    return jsonify({"error": "Metoda nie jest dozwolona"}), 405
 
 
 @app.errorhandler(500)
 def internal_error(e):
-    return jsonify({"error": "Internal server error"}), 500
+    return jsonify({"error": "Wewnętrzny błąd serwera"}), 500
 
 
 # ---- APP STARTUP ----

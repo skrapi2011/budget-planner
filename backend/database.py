@@ -3,14 +3,22 @@ import os
 
 
 APP_ROOT = os.path.dirname(os.path.abspath(__file__))
-DB_PATH = os.path.join(APP_ROOT, 'data', 'baza.db')
+
+# Audit P1-49: the test suite needs a DB that is not backend/data/baza.db. Importing App.py
+# runs init_db() at module level (AGENTS.md §3), so the only way to get an isolated test DB
+# is to redirect the path before import. DATABASE_PATH wins when set; the default is
+# unchanged for normal runs.
+DB_PATH = os.environ.get("DATABASE_PATH") or os.path.join(APP_ROOT, 'data', 'baza.db')
 
 
 def get_connection():
     # A fresh clone has no backend/data/ at all (.gitignore lists it, and the
     # `!backend/data/.gitkeep` exception had no matching file), so sqlite3 answered
     # "unable to open database file" and the app did not start (audit P0-13).
-    os.makedirs(os.path.dirname(DB_PATH), exist_ok=True)
+    # Guard the dirname: with DATABASE_PATH pointing at a bare filename it is empty.
+    data_dir = os.path.dirname(DB_PATH)
+    if data_dir:
+        os.makedirs(data_dir, exist_ok=True)
     conn = sqlite3.connect(DB_PATH)
     conn.row_factory = sqlite3.Row
     conn.execute("PRAGMA foreign_keys = ON")
