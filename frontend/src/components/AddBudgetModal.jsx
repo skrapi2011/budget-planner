@@ -2,7 +2,7 @@ import { useState, useEffect, useRef } from 'react';
 import * as api from '../api';
 
 export default function AddBudgetModal({ monthStr, categories, onClose, onAdded }) {
-  const [selectedCatId, setSelectedCatId] = useState('');
+  const [pickedCatId, setPickedCatId] = useState('');
   const [amount, setAmount] = useState('');
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState(null);
@@ -13,6 +13,12 @@ export default function AddBudgetModal({ monthStr, categories, onClose, onAdded 
   // Use fallback categories when prop is missing/empty (race condition guard)
   const hasPropCats = Array.isArray(categories) && categories.length > 0;
   const effectiveCats = hasPropCats ? categories : fallbackCategories;
+
+  // Derived default: first category when the user has not picked one. Keeping this as a
+  // plain derivation removes the setState-in-effect (audit P1-31). Declared AFTER
+  // effectiveCats: referencing it above was a TDZ ReferenceError that crashed every render
+  // of the modal ("Cannot access 'effectiveCats' before initialization").
+  const selectedCatId = pickedCatId || (effectiveCats[0]?.id?.toString() || '');
 
   useEffect(() => {
     const needsFetch = !Array.isArray(categories) || categories.length === 0;
@@ -25,13 +31,6 @@ export default function AddBudgetModal({ monthStr, categories, onClose, onAdded 
       .catch(() => setError('Nie udało się załadować kategorii. Sprawdź połączenie z internetem.'))
       .finally(() => setCatsLoading(false));
   }, [categories]);
-
-  // when categories load, auto-select if none selected yet
-  useEffect(() => {
-    if (!selectedCatId && effectiveCats.length > 0) {
-      setSelectedCatId(effectiveCats[0].id?.toString() || '');
-    }
-  }, [effectiveCats, selectedCatId]);
 
   // Escape closes the modal.
   useEffect(() => {
@@ -96,7 +95,7 @@ export default function AddBudgetModal({ monthStr, categories, onClose, onAdded 
                   <button
                     type="button"
                     key={cat.id}
-                    onClick={() => setSelectedCatId(cat.id?.toString() || '')}
+                    onClick={() => setPickedCatId(cat.id?.toString() || '')}
                     title={cat.name}
                     className={`flex items-center gap-2 px-3 py-2 rounded-lg text-sm font-medium transition-all ${
                       selectedCatId === cat.id?.toString()

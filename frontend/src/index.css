@@ -57,13 +57,6 @@ body {
   background: #475569;
 }
 
-.modal-overlay {
-  transition: opacity 0.2s ease-in-out;
-}
-.modal-content {
-  transition: transform 0.2s ease-in-out, opacity 0.2s ease-in-out;
-}
-
 *, :before, :after {
   box-sizing: border-box;
 }

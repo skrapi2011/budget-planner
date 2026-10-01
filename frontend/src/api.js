@@ -114,7 +114,9 @@ export async function createBudget(data) {
     headers: getHeaders(true), 
     body: JSON.stringify({ 
       category_id: Number(data.categoryId || data.category_id), 
-      amount_monthly: parseFloat(data.amount_monthly || data.budzet), 
+      // `??` not `||`: amount_monthly=0 used to fall through to undefined → NaN → backend 400
+      // (audit P1-32).
+      amount_monthly: parseFloat(data.amount_monthly ?? data.budzet), 
       month_year: data.month_year 
     }) 
   });

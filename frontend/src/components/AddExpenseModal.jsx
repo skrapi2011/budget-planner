@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import { useState, useEffect } from 'react';
 import { useToast } from './ToastContext';
 import { localDateStr } from '../utils/date';
 import * as api from '../api';
@@ -46,26 +46,17 @@ export default function AddExpenseModal({ isOpen, onClose, onSubmit, activeCateg
 
 function Form({ isOpen, categories, onClose, onSubmit, initial = null }) {
   const { error: toastError } = useToast();
-  const [type, setType] = useState('wydatek')
-  const [amount, setAmount] = useState('')
-  const [description, setDescription] = useState('')
-  const [date, setDate] = useState(localDateStr())
-  const [tagsText, setTagsText] = useState('')
+  const [type, setType] = useState(initial?.type || 'wydatek')
+  const [amount, setAmount] = useState(initial?.amount != null ? String(initial.amount) : '')
+  const [description, setDescription] = useState(initial?.description || '')
+  const [date, setDate] = useState(initial?.date || localDateStr())
+  const [tagsText, setTagsText] = useState(Array.isArray(initial?.tags) ? initial.tags.join(', ') : '')
   const [knownTags, setKnownTags] = useState([])
-  const [categoryId, setCategoryId] = useState('')
+  const [categoryId, setCategoryId] = useState(initial?.category_id != null ? String(initial.category_id) : '')
 
-  useEffect(() => {
-    if (isOpen) {
-      // Prefill from `initial` when editing, reset to defaults when adding.
-      setType(initial?.type || 'wydatek')
-      setAmount(initial?.amount != null ? String(initial.amount) : '')
-      setDescription(initial?.description || '')
-      setDate(initial?.date || localDateStr())
-      setTagsText(Array.isArray(initial?.tags) ? initial.tags.join(', ') : '')
-      setCategoryId(initial?.category_id != null ? String(initial.category_id) : '')
-    }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [isOpen, initial])
+  // Prefill/reset happens through the initial state above: the parent keys this component
+  // by the edit target, so opening the modal remounts it (audit P1-31 — setState in an
+  // effect on [isOpen, initial] was the cascading-render pattern the lint rule flags).
 
   // Suggestions for the tag field (audit P0-22: the whole tags infrastructure was
   // unreachable from the UI because the modal had no tag input).

@@ -123,7 +123,7 @@ export default function CategoriesView() {
                   <hr />
 
                   <button onClick={() => handleToggleActive()} className="w-full px-3 py-1.5 text-xs font-medium rounded-md border border-gray-300 dark:border-slate-600 hover:bg-gray-50 dark:hover:bg-slate-700 transition-colors text-gray-700 dark:text-slate-300">
-                    {!!editing.active ? 'Dezaktywuj kategorię' : 'Aktywuj kategorię'}
+                    {editing.active ? 'Dezaktywuj kategorię' : 'Aktywuj kategorię'}
                   </button>
 
                   <button onClick={handleDelete} className="w-full px-3 py-1.5 text-xs font-medium rounded-md text-red-700 border border-red-300 hover:bg-red-50 dark:hover:bg-slate-700 transition-colors">Usuń kategorię</button>
