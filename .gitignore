@@ -32,6 +32,9 @@ wheels/
 # Node.js frontend
 frontend/node_modules/
 frontend/dist/
+# Probe builds (vite lib-mode bundles used for jsdom smoke tests) — build output,
+# never committed. Without this `npm run lint` (eslint .) lints a 2.7 MB bundle.
+frontend/dist_probe/
 
 # Database
 backend/data/baza.db

@@ -31,9 +31,8 @@ budget-planner/
 ├── AGENTS.md                  ← you are here
 ├── README.md                  ← one line only; this file is the real doc
 ├── backend/
-│   ├── App.py                 ← ALL Flask routes + seeding logic (~1340 lines). Entry point.
+│   ├── App.py                 ← ALL Flask routes + seeding logic (~1300 lines). Entry point.
 │   ├── database.py            ← SQLite schema (SCHEMA list) + get_connection() factory
-│   ├── seed.py                ← ⚠️ LEGACY seeder, stale — see §9. Not used by App.py.
 │   ├── __init__.py            ← empty
 │   └── data/baza.db           ← SQLite DB (gitignored; auto-created on first run)
 └── frontend/
@@ -46,10 +45,11 @@ budget-planner/
         ├── main.jsx           ← React root, StrictMode
         ├── App.jsx            ← router: lazy routes + ProtectedRoute/UnprotectedRoute
         ├── api.js             ← ⚠️ the ONLY place HTTP happens. Never fetch() in pages.
-        ├── AuthContext.jsx    ← user/token state, login/logout/adoptSession/clearSession
-        ├── ThemeContext.jsx   ← dark/light, .dark class on <html>
+        ├── AuthContext.js     ← context + useAuth() hook ONLY (no JSX) — see §7.5
+        ├── AuthProvider.jsx   ← user/token state, login/logout/adoptSession/clearSession
+        ├── ThemeContext.js    ← context + useTheme() hook ONLY (no JSX) — see §7.5
+        ├── ThemeProvider.jsx  ← dark/light, .dark class on <html>
         ├── index.css          ← Tailwind v4 entry + animation utilities (.page-enter, .stagger-children, …)
-        ├── App.css
         ├── components/
         │   ├── Layout.jsx     ← top nav (navItems array = the app's menu)
         │   ├── AddExpenseModal.jsx
@@ -60,7 +60,8 @@ budget-planner/
         ├── hooks/
         │   └── animation.js   ← useAnimatedValue() / useCountUp()
         ├── utils/
-        │   └── date.js        ← currentMonthStr() / currentYear() (local time, not UTC)
+        │   ├── date.js        ← currentMonthStr() / currentYear() / monthLabel() / MONTH_NAMES
+        │   └── money.js       ← formatMoney() — the single PLN formatter
         └── pages/             ← one file per route, all lazy-loaded
             ├── LoginPage.jsx  RegisterPage.jsx
             ├── Dashboard.jsx  ExpensesView.jsx  CategoriesView.jsx
@@ -325,13 +326,21 @@ Route paths are **Polish and part of the contract** — don't rename them withou
 ### 7.4 Language & state
 
 - All user-visible strings are **Polish** (nav, buttons, month names, validation messages).
-  Keep new UI text in Polish. Note the `MONTH_NAMES` array (`Styczeń…Grudzień`) is
-  duplicated across several pages — if you change one, change all.
+  Keep new UI text in Polish. The `MONTH_NAMES` array (`Styczeń…Grudzień`) lives **only** in
+  `utils/date.js`; use `monthLabel("YYYY-MM")` → `"Wrzesień 2026"` instead of re-deriving it
+  per page. The backend mirrors the same list as `MONTH_NAMES_PL` in `App.py`.
+  ⚠️ Two known leaks of non-Polish text: (a) `dashboard_data` builds `monthly_history` labels
+  with `calendar.month_name` → the Dashboard history chart renders `"October 26"` while the
+  cards around it say `"Październik"`; (b) backend validation messages are English
+  (`"Color must be a hex value like #e74c3c"`) and `api.js` surfaces them verbatim through
+  `toastError(err.message)`. Fix both in the backend, not by patching pages.
 - No global state library. Auth: `AuthContext`; theme: `ThemeContext`; everything else is
   local `useState`/`useEffect` per page with a `loading` flag and a `load*()` async function
   in a `useEffect` keyed on the month/year filter (see `Budgets.jsx`, `Dashboard.jsx`).
 - Legacy duplication to be aware of: `Dashboard.jsx` defines its own local `useDark()` hook
-  instead of using `ThemeContext` — don't copy that pattern into new pages.
+  (system media query) instead of using `ThemeContext` — it drives one text colour in
+  `CategoryRow`, so a manual theme toggle in `Layout` does not reach it. Don't copy that
+  pattern into new pages.
 
 ### 7.5 Toasts, confirm dialogs & animations (shared infra)
 
@@ -345,6 +354,10 @@ Route paths are **Polish and part of the contract** — don't rename them withou
     lives in `ToastProvider.jsx`. Keep them split — merging them re-triggers the
     `react-refresh/only-export-components` ESLint error. Do not reintroduce native
     `alert()`/`confirm()`; route every user notification through `useToast()`.
+  - **The same split applies to Auth and Theme**: `AuthContext.js` / `AuthProvider.jsx` and
+    `ThemeContext.js` / `ThemeProvider.jsx`. Import the hook from the `.js` file and the
+    provider from the `.jsx` file (`App.jsx` does exactly this). Adding a component to a
+    `.js` context file re-breaks fast refresh.
 - **Animation utilities** (defined in `index.css`, respect `prefers-reduced-motion`):
   - `.page-enter` — fade/slide-in for a page's main content block. Pair with a `key={monthStr}`
     (or year) so it re-animates on filter change.
@@ -360,9 +373,14 @@ Route paths are **Polish and part of the contract** — don't rename them withou
 - **Loading pattern (no-flicker):** pages keep a `hasLoaded` flag alongside `loading`. Show the
   spinner only while `loading && !hasLoaded`; once data has loaded at least once, re-fetches
   dim the existing content (`opacity-50 pointer-events-none`) instead of unmounting it.
-- **Date helpers** (`utils/date.js`): `currentMonthStr()` → local `"YYYY-MM"`, `currentYear()`.
+- **Date helpers** (`utils/date.js`): `currentMonthStr()` → local `"YYYY-MM"`, `currentYear()`,
+  `localDateStr()` → `"YYYY-MM-DD"`, `MONTH_NAMES` + `monthLabel("YYYY-MM")` → `"Wrzesień 2026"`.
   Always use these for "today/this month" defaults — never `new Date().toISOString()` (UTC
   can shift the month). Month nav pages also expose a “Dziś” / “Ten rok” shortcut button.
+- **Money formatting** (`utils/money.js`): `formatMoney(v)` is the single PLN formatter
+  (`pl-PL`, 2 decimals, `zł` suffix). It passes through already-formatted strings and returns
+  `String(v)` for non-finite input, so `NaN` never reaches the DOM. Do not add a per-page
+  `fmtMoney`/`formatMoney` copy — three divergent copies were removed in audit P1-30.
 
 ---
 
@@ -398,11 +416,11 @@ There is **no test suite and no CI**. Verify changes this way, in order:
 2. ~~`DELETE /api/categories/<id>` deletes Budgets rows for ALL users~~ **fixed**: the budget
    delete is scoped by `user_id`, and `Budgets.category_id` is `ON DELETE CASCADE` (§5/§9.8),
    so a category delete cascades only within the owning user.
-3. **`backend/seed.py` is stale and inconsistent with reality.** It hardcodes `2025-07`,
-   uses different category names (`"Nośność / Miejsce zamieszkania"` vs the actual
-   `"Mieszkanie"`, etc.) and is never called by `App.py`. The *real* seeder is
-   `init_db()` + `_seed_categories_for_user()` + `seed_dummy_data()` inside `App.py`.
-   Treat `seed.py` as legacy; don't extend it, and don't trust its category list.
+3. ~~`backend/seed.py` is stale~~ **deleted**: it hardcoded `2025-07`, used different category
+   names (`"Nośność / Miejsce zamieszkania"` vs the actual `"Mieszkanie"`) and was never called
+   by `App.py`. The *only* seeder is `init_db()` + `_seed_categories_for_user()` +
+   `seed_dummy_data()` inside `App.py`. If a standalone seeder is ever needed, build it from
+   `App.py`, not from git history.
 4. ~~Duplicate `by-month` endpoints~~ **fixed**: `GET /api/budgets/by-month` and
    `GET /api/budgets?month=` (both with no frontend caller) were removed; the single
    implementation is `_budgets_view()` behind `POST /api/budgets/by-month-post`. Also removed
@@ -424,10 +442,22 @@ There is **no test suite and no CI**. Verify changes this way, in order:
 10. **Nested `<button>` in `Tags.jsx`** — the tag row is a `<button>` that contains the
     rename/delete buttons. React warns `In HTML, <button> cannot be a descendant of <button>`
     and the nesting is invalid HTML (breaks hydration / a11y). Restructure the row (e.g. a
-    `<div>` with the label as a button) when touching that page.
-11. **Lint baseline is not clean:** `npm run lint` reports problems in committed code
-    (`_fix_colors.js` from the init commit, react-hooks warnings, etc.). Do not assume a
-    green lint run is the pre-existing state — compare against the baseline before shipping.
+    `<div>` with the label as a button) when touching that page. **Still open** — the page was
+    rewritten in the tags work (P0-22/23) and the nesting survived.
+11. **Lint baseline is clean for `src/`.** `npx eslint src/` reports 0 problems (the
+    react-hooks `set-state-in-effect`, `exhaustive-deps`, `no-empty`, `no-extra-boolean-cast`
+    and dead-variable findings from the audit pass were cleared, and `no-empty` is configured
+    with `allowEmptyCatch` for the documented best-effort catches). `npm run lint` (`eslint .`)
+    also stays clean because `dist` and `dist_probe` are in `globalIgnores`. If you add a
+    jsdom probe harness, keep its build output out of the lint graph and declare `jsdom` in
+    `package.json` — an undeclared dep in `node_modules` disappears on `npm ci`.
+12. **`DELETE /api/categories/<id>` returns 200 `{"success":true}` for an id the caller does
+    not own** (the delete is scoped by `user_id`, so nothing is removed, but the response is a
+    false success). `PUT /api/categories/<id>` correctly returns 404. Align them when touching
+    the route.
+13. **No budget delete.** There is no `DELETE /api/budgets/<id>` route, no `api.deleteBudget`,
+    and no delete button in `Budgets.jsx` — a budget can only be set to 0. `DELETE` on that
+    path answers 405.
 
 ---
 
@@ -455,10 +485,9 @@ Search for the field name across `frontend/src` before renaming. Remember `api.j
 dual camelCase/snake_case tolerance (§7.2).
 
 ### Change default categories / seeding
-Edit `_seed_categories_for_user()` in `backend/App.py` (the live seeder — **not**
-`seed.py`). Seeding runs on startup for the demo admin and on registration for new users;
-existing users keep their old rows (inserts are best-effort with `IntegrityError`
-swallowed).
+Edit `_seed_categories_for_user()` in `backend/App.py` — the only seeder. Seeding runs on
+startup for the demo admin and on registration for new users; existing users keep their old
+rows (inserts are best-effort with `IntegrityError` swallowed).
 
 ### Reset to a clean demo state
 Stop backend → `rm backend/data/baza.db` → restart. Admin/admin123 + 10 categories +
@@ -473,7 +502,7 @@ Stop backend → `rm backend/data/baza.db` → restart. Admin/admin123 + 10 cate
 - Work on `feature/*` branches, merge to `main` via PR (history shows
   `feature/darkmode`, `feature/ui-tweaks`).
 - Never commit: `backend/data/*.db`, `frontend/node_modules/`, `frontend/dist/`,
-  `__pycache__/` — all gitignored. The DB is per-machine state.
+  `frontend/dist_probe/`, `__pycache__/` — all gitignored. The DB is per-machine state.
 - Check `git status` before starting: the working tree may contain in-flight changes from
   a previous session (e.g. uncommitted edits to `backend/App.py`).
 
@@ -487,15 +516,17 @@ Stop backend → `rm backend/data/baza.db` → restart. Admin/admin123 + 10 cate
 - Write Polish UI strings; add `dark:` variants to every new element.
 - Route all HTTP through `src/api.js`; keep month (`YYYY-MM`) / date (`YYYY-MM-DD`) formats.
 - Notify users via `useToast()` (`success`/`error`/`confirm`), never native `alert`/`confirm`.
-- Use `utils/date.js` (`currentMonthStr`/`currentYear`) for "today" defaults, not `toISOString()`.
+- Use `utils/date.js` (`currentMonthStr`/`currentYear`/`monthLabel`) for "today" defaults and
+  month labels, not `toISOString()`; use `utils/money.js` (`formatMoney`) for PLN amounts.
 - Commit with conventional prefixes on a `feature/*` branch.
 
 **Don't**
 - Don't rename `'Przychod'` (capital P) or `'wydatek'` — CHECK constraint + data + UI depend on exact casing.
 - Don't `import App` in tooling/scripts (side-effect DB init).
-- Don't trust `backend/seed.py` for category names or dates.
+- Don't trust `backend/seed.py` for category names or dates — it no longer exists; `App.py` is the seeder.
 - Don't assume `GET /api/transactions` returns all history (current month only by default).
-- Don't rely on the omitted-`month` path of `/api/stats/dashboard-data` (500s today).
-- Don't commit the SQLite DB, `node_modules/`, or `dist/`.
+- Don't re-derive month names per page — `monthLabel()` and `MONTH_NAMES_PL` are the two
+  canonical lists; `dashboard_data` still emits English labels (see §7.4).
+- Don't commit the SQLite DB, `node_modules/`, `dist/`, or `dist_probe/`.
 - Don't add a second fetch layer, state library, or Tailwind theme token without discussion —
   match the existing minimal architecture.
