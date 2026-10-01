@@ -1,7 +1,8 @@
 import { BrowserRouter, Routes, Route, Navigate, useNavigate, useLocation } from 'react-router-dom';
 import { lazy, Suspense, useEffect } from 'react';
-import { AuthProvider, useAuth } from './AuthContext';
-import { ThemeProvider } from './ThemeContext';
+import { useAuth } from './AuthContext';
+import { AuthProvider } from './AuthProvider';
+import { ThemeProvider } from './ThemeProvider';
 import ToastProvider from './components/ToastProvider';
 import * as api from './api';
 
