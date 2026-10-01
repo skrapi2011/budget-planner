@@ -33,7 +33,9 @@ budget-planner/
 ├── backend/
 │   ├── App.py                 ← ALL Flask routes + seeding logic (~1300 lines). Entry point.
 │   ├── database.py            ← SQLite schema (SCHEMA list) + get_connection() factory
+│   ├── requirements.txt       ← Flask / PyJWT / flask-cors / pytest
 │   ├── __init__.py            ← empty
+│   ├── tests/                 ← pytest suite (conftest.py sets DATABASE_PATH before App import)
 │   └── data/baza.db           ← SQLite DB (gitignored; auto-created on first run)
 └── frontend/
     ├── index.html             ← contains anti-FOUC dark-mode script — keep in sync with ThemeContext
@@ -62,6 +64,9 @@ budget-planner/
         ├── utils/
         │   ├── date.js        ← currentMonthStr() / currentYear() / monthLabel() / MONTH_NAMES
         │   └── money.js       ← formatMoney() — the single PLN formatter
+        ├── test/                ← renderWithProviders() harness + setup.js (matchMedia, localStorage)
+        │   ⚠️ tests are colocated with the code they test: utils/date.test.js,
+        │   components/AddBudgetModal.test.jsx, pages/Budgets.test.jsx, …
         └── pages/             ← one file per route, all lazy-loaded
             ├── LoginPage.jsx  RegisterPage.jsx
             ├── Dashboard.jsx  ExpensesView.jsx  CategoriesView.jsx
@@ -219,7 +224,7 @@ Categories:
 | `GET /api/categories/active` 🔒 | only `active=1`, ordered by `default_order` — `api.getCategories(true)` calls this |
 | `POST /api/categories` 🔒 | `{name, color?, icon?}` → 201; duplicate name for user → 409 |
 | `PUT /api/categories/<id>` 🔒 | partial: any of `name,color,icon,default_order,active` |
-| `DELETE /api/categories/<id>` 🔒 | cascades to the user's transactions **and budgets** (see bug §9.2) |
+| `DELETE /api/categories/<id>` 🔒 | cascades to the user's transactions **and budgets** (see bug §9.2). **404** when the id is not owned (audit P1-47 — it used to answer a false 200) |
 
 Budgets:
 
@@ -228,6 +233,7 @@ Budgets:
 | `POST /api/budgets/by-month-post` 🔒 | `{month}` → LEFT JOIN: all active categories + `wydatki`, `saldo`, `status` (`in_budget`\|`over_budget`). The only budgets-view endpoint — the copy-paste GET twin `GET /api/budgets/by-month` and the unused `GET /api/budgets?month=` were removed (audit P0-25); `GET /api/budgets` with GET now returns **405** |
 | `POST /api/budgets` 🔒 | `{category_id, amount_monthly, month_year}` → 201; UNIQUE conflict → upsert → 200 |
 | `PUT /api/budgets/<id>` 🔒 | `{amount}` or `{amount_monthly}` (≥ 0) |
+| `DELETE /api/budgets/<id>` 🔒 | added in audit P1-48 (the route did not exist → 405). 404 when the row is not owned; `api.deleteBudget` + the trash button in `Budgets.jsx` |
 
 Transactions:
 
@@ -255,6 +261,11 @@ Tags & stats:
 - The frontend only treats non-ok as generic errors (`api.js` throws on `!response.ok`,
   special-casing 401), so these codes are safe to have — but if you change them, check the
   frontend first.
+- New routes use the conventional codes: `DELETE /api/categories/<id>` and
+  `DELETE /api/budgets/<id>` both answer **404**. Do not "fix" the two legacy codes above
+  without checking `api.js`.
+- **All validation messages are Polish** (audit P1-46): `api.js` throws `data.error` and pages
+  show it via `toastError(err.message)`, so a new message must be written in Polish.
 
 ---
 
@@ -386,7 +397,28 @@ Route paths are **Polish and part of the contract** — don't rename them withou
 
 ## 8. Verification workflow
 
-There is **no test suite and no CI**. Verify changes this way, in order:
+There is **no CI**, but there **is a test suite** (added after the second audit round):
+**255 backend + 335 frontend tests, all green.** A green run is the pre-existing state — if a
+change breaks one, fix the code, not the assertion.
+
+```bash
+python -m pytest backend/tests            # backend: Flask test client + isolated temp DB
+python -m pytest backend/tests -v         # per-case output
+cd frontend && npm test                   # Vitest + Testing Library (jsdom)
+cd frontend && npm test -- --run          # single run (no watch)
+```
+
+- `backend/tests/conftest.py` sets `DATABASE_PATH` to a per-session temp file **before**
+  importing `App.py`, which is what makes the module-level `init_db()` side effect (§3) safe.
+  Never import `App` outside that harness.
+- Frontend tests live next to the code they test (`src/utils/date.test.js`,
+  `src/components/AddBudgetModal.test.jsx`, …). Vitest reuses **`vite.config.js`** (its `test`
+  block sets `environment: 'jsdom'`, `globals: true`, `setupFiles`), so the JSX transform and
+  the Tailwind plugin are identical to the dev/build pipeline. `src/test/setup.js` pins
+  `NODE_ENV=test`, stubs `matchMedia` and clears `localStorage` between tests.
+- `npm run lint` is clean for `src/` and for `eslint .` (`dist`/`dist_probe` are ignored).
+
+For changes the suite does not cover, verify manually in this order:
 
 1. **Backend change:**
    ```bash
@@ -406,6 +438,9 @@ There is **no test suite and no CI**. Verify changes this way, in order:
    page in `npm run dev` (backend must be running for real data).
 3. **DB sanity:** `sqlite3 backend/data/baza.db "SELECT * FROM Transactions ORDER BY id DESC LIMIT 5;"`
 4. After manual tests, delete test rows or reset the DB (§3) so demo data stays clean.
+5. Keep the suites honest: a new endpoint gets a `backend/tests/` case, a new page component
+   gets a `frontend` case. If you fix a bug, add the failing case first (the AddBudgetModal TDZ
+   crash is the example — `npm run build` and lint both passed while the modal was dead).
 
 ---
 
@@ -432,8 +467,9 @@ There is **no test suite and no CI**. Verify changes this way, in order:
    other.
 6. ~~`app.run(debug=True)`~~ **fixed**: debug is off by default; set `FLASK_DEBUG=1` to enable
    it for dev. Unhandled exceptions return JSON `{"error":"Internal server error"}` (500).
-7. **No backend dependency manifest.** `flask`, `pyjwt`, `flask-cors` are implicit
-   (werkzeug comes with Flask). If you add a dependency, create/maintain `requirements.txt`.
+7. ~~**No backend dependency manifest.**~~ **fixed**: `backend/requirements.txt` lists
+   `Flask`, `PyJWT`, `flask-cors` (runtime) and `pytest` (tests). werkzeug ships with Flask.
+   `pip install -r backend/requirements.txt` reproduces the environment.
 8. **Deploy config is contradictory:** `package.json` has a `deploy: gh-pages -d dist`
    script *and* there's a `vercel.json` SPA rewrite. Vercel appears to be the live target;
    don't remove either without confirming.
@@ -451,13 +487,11 @@ There is **no test suite and no CI**. Verify changes this way, in order:
     also stays clean because `dist` and `dist_probe` are in `globalIgnores`. If you add a
     jsdom probe harness, keep its build output out of the lint graph and declare `jsdom` in
     `package.json` — an undeclared dep in `node_modules` disappears on `npm ci`.
-12. **`DELETE /api/categories/<id>` returns 200 `{"success":true}` for an id the caller does
-    not own** (the delete is scoped by `user_id`, so nothing is removed, but the response is a
-    false success). `PUT /api/categories/<id>` correctly returns 404. Align them when touching
-    the route.
-13. **No budget delete.** There is no `DELETE /api/budgets/<id>` route, no `api.deleteBudget`,
-    and no delete button in `Budgets.jsx` — a budget can only be set to 0. `DELETE` on that
-    path answers 405.
+12. ~~`DELETE /api/categories/<id>` returns 200 for a foreign id~~ **fixed** (audit P1-47):
+    ownership is checked, so it answers 404 like `PUT` on the same path.
+13. ~~No budget delete~~ **fixed** (audit P1-48): `DELETE /api/budgets/<id>` +
+    `api.deleteBudget` + a trash button in `Budgets.jsx` (guarded by `confirm()`). The button is
+    a sibling of the `limit > 0` ternary, so a zero-limit budget row is deletable too.
 
 ---
 
@@ -466,10 +500,11 @@ There is **no test suite and no CI**. Verify changes this way, in order:
 ### Add a new API endpoint
 1. Add the route in `backend/App.py` following §6.1 house style (`@require_auth`,
    `get_connection()`, user-scoped query, explicit commit, `finally: conn.close()`).
-2. Validate input up front; return JSON errors with proper status codes.
+2. Validate input up front; return JSON errors with proper status codes — **in Polish** (§6.3).
 3. Add a matching function to `frontend/src/api.js` (snake_case body keys) and use it from
    the page — never fetch directly.
-4. Verify with curl (§8), then in the dev server.
+4. Add a case to `backend/tests/` (auth, user isolation, the happy path, and the 400/404 path).
+5. Verify with `python -m pytest backend/tests`, then in the dev server.
 
 ### Add a new page/route
 1. Create `frontend/src/pages/<Name>View.jsx` (default export, `Layout` wrapper like other
@@ -477,7 +512,8 @@ There is **no test suite and no CI**. Verify changes this way, in order:
 2. Register it in `App.jsx`: `lazy(() => import('./pages/...'))` + a `<Route>` inside
    `ProtectedRoute`.
 3. Add the menu entry to `navItems` in `components/Layout.jsx`.
-4. `npm run lint && npm run build`.
+4. Add a `frontend` test for the render + the main interaction (colocated `*.test.jsx`).
+5. `npm run lint && npm run build && npm test`.
 
 ### Change an API contract (field names/shapes)
 Update **both** sides atomically: backend route + `api.js` function + every page using it.

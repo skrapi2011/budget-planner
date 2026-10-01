@@ -267,17 +267,18 @@ Przy bearerze w headerze (nie cookie) nie kradnie tokena, ale warto zawęzić do
 `POST /api/auth/login` bez rate limitu/lockout; `register` wymaga min. 4 znaków.
 Hashing (`werkzeug`) jest OK (pbkdf2).
 
-### 41. 🔧 Brak `requirements.txt` (§9.7)
+### 41. ✅ Brak `requirements.txt` (§9.7)
 `flask`, `pyjwt`, `flask-cors` implicytne. Dodaj manifest — bez niego świeże środowisko
-nie jest odtwarzalne.
+nie jest odtwarzalne. **Zrobione:** `backend/requirements.txt` (runtime + pytest).
 
 ### 42. 🔧 Sprzeczny deploy (§9.8)
 `package.json`: `deploy: gh-pages -d dist` **i** `vercel.json` (SPA rewrite). Vercel wygląda na
 żywy cel; gh-pages wymaga `base` w `vite.config.js` (dziś `base: '/'`) → build na gh-pages
 prawdopodobnie ma złe ścieżki assetów. Potwierdź cel i usuń jedno.
 
-### 43. 🔧 `index.html`: `<html lang="en">` i `<title>frontend</title>`
+### 43. ✅ `index.html`: `<html lang="en">` i `<title>frontend</title>`
 Aplikacja jest w pełni po polsku. Ustaw `lang="pl"` i `<title>Planowanie Wydatków</title>`.
+**Zrobione.**
 
 ### 44. 🔧 `init_db()` przy imporcie modułu (§3 AGENTS.md)
 Każde `import App` tworzy/modyfikuje bazę. Przenieś wywołanie pod `if __name__ == "__main__"`
@@ -286,6 +287,79 @@ Każde `import App` tworzy/modyfikuje bazę. Przenieś wywołanie pod `if __name
 ### 45. 🔧 Seed niezdeterministyczny
 `abs(hash((user_id, cid[0], month_str)))` — hash stringów w Pythonie jest solony per proces
 (`PYTHONHASHSEED`) → seed data różni się przy każdym starcie. Użyj `random.Random(f"{user_id}-{cid}-{month}")`.
+
+---
+
+## P1 — naprawione w drugiej rundzie (46–52)
+
+### 46. ✅ Angielski tekst w polskim UI
+Dwie dziury: `dashboard_data` budował labelki historii przez `calendar.month_name` → wykres
+historii na Dashboardzie renderował „October 26" obok kart z „Październik"; oraz komunikaty
+walidacji backendu były po angielsku, a `api.js` rzuca je jako `err.message` →
+`toastError(err.message)`. Naprawione: `MONTH_NAMES_PL` w `dashboard_data` + wszystkie
+komunikaty 400/401/403/404/409/500 po polsku.
+
+### 47. ✅ `DELETE /api/categories/<id>` — fałszywy sukces
+Delete jest scoped by `user_id`, więc cudze id nie usuwa danych, ale route odpowiadał
+`200 {"success": true}`. `PUT` na tej samej ścieżce odpowiada 404. Dodana kontrola własności → 404.
+
+### 48. ✅ Brak usuwania budżetu
+Nie było `DELETE /api/budgets/<id>`, `api.deleteBudget` ani przycisku — budżet dało się tylko
+zerować, a DELETE na ścieżce odpowiadał 405. Dodane razem (route → api.js → przycisk w
+`Budgets.jsx` z `confirm()`). Route używa 404, nie 401 (quirk `PUT` z §6.3 AGENTS.md). Przycisk
+jest rodzeństwem ternary `limit > 0`, więc budżet z limitem 0 też da się usunąć.
+
+### 49. ✅ Brak izolowanej bazy dla testów
+`DB_PATH` był liczony z `__file__`, a `init_db()` działa przy imporcie `App.py` (§3 AGENTS.md),
+więc testy nie miały czystej bazy. `DATABASE_PATH` (env) wygrywa, gdy ustawiony; domyślna
+ścieżka bez zmian. `get_connection()` chroni pusty `dirname` (`makedirs('')` rzuciłby błąd).
+
+### 50. ✅ `Dashboard.jsx` — lokalny `useDark()`
+Hook czytał media query systemu, więc ręczny toggle motywu w `Layout` nie docierał do strony
+(§7.4 AGENTS.md: „don't copy that pattern"). Jedynym konsumentem był jeden kolor tekstu w
+`CategoryRow` — zastąpiony klasą `dark:`, hook usunięty.
+
+### 51. ✅ Wyścig przy szybkiej zmianie miesiąca
+`YearOverview` miał guard `cancelled`; `Dashboard`, `ExpensesView` i `Budgets` nie — starsza
+odpowiedź mogła nadpisać nową. Dodany id żądania (`reqIdRef`): zapis jest warunkowany tym, czy
+odpowiedź należy do najnowszego żądania. W `Budgets.jsx` loader musi być zadeklarowany **przed**
+efektem, który go wymienia w deps — wcześniejsza kolejność dawała TDZ ReferenceError.
+
+### 52. ✅ Zagnieżdżone `<button>` w `Tags.jsx` (§9.10)
+Wiersz tagu był `<button>` zawierający przyciski rename/delete — invalid HTML, React
+`In HTML, <button> cannot be a descendant of <button>`. Wiersz jest teraz `<div>`, nazwa tagu
+jest osobnym buttonem, akcje są rodzeństwem (bez `e.stopPropagation()`).
+
+### 53. ✅ Martwy payload w `dashboard_data`
+`planned_all_time` i `chart_data` były liczone i nigdy nie czytane (Dashboard używa
+`total_all_time`/`month_total`/`prev_month_total`/`current_planned`/`monthly_history`, a paski
+budżetów biorą dane z `POST /api/budgets/by-month-post`). Usunięte razem z dwoma zapytaniami.
+
+---
+
+## Testy
+
+Suite jest w `backend/tests/` (pytest, 255 testów) i `frontend/src/**/*.test.{js,jsx}`
+(Vitest + Testing Library, 335 testów). Uruchamianie: `python -m pytest backend/tests` i
+`cd frontend && npm test`. Brak CI — patrz §8 AGENTS.md.
+
+Backend: Flask test client na tymczasowym SQLite (`DATABASE_PATH` ustawiany przed
+`import App`, bo `init_db()` jest side-effectem na poziomie modułu). Frontend: jsdom, każdy
+HTTP idzie przez `api.js` i jest mockowany, więc testy nie potrzebują działającego backendu.
+
+Naprawione przez testy (znalezione przez nie, nie przez przegląd):
+- `json_each()` na obiekcie JSON zwraca jego wartości → legacy wiersz `{"a":1}` pokazywał
+  `1` jako tag. Dodany `json_type(...)='array'`.
+- `year_summary` z int `year` → `AttributeError` na `.strip` → 500.
+- `strptime("2026-5-15")` akceptuje brak zer → data zapisana bez paddingu psuje
+  porównania okna miesiąca i `ORDER BY date`.
+- Domyślny handler 405 w Flask zwraca HTML, którego `api.js` nie potrafi odczytać.
+- `/api/categories/active` zwracał `active: 1` (int) vs bool w `/api/categories`.
+- `Dashboard.handleAddExpense` bez try/catch → nieobsłużony rejection, modal zamykał się
+  bez komunikatu.
+
+Zasada: test asercje odzwierciedlają zamierzone zachowanie. Jeśli test przechodzi, bo
+kod ma bug, test jest błędny — patrz §8 AGENTS.md.
 
 ---
 
