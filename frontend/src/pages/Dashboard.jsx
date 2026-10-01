@@ -1,25 +1,20 @@
-import { useState, useEffect, useCallback } from 'react';
-let darkMQ = typeof window !== 'undefined' ? window.matchMedia('(prefers-color-scheme: dark)') : null;
-function useDark() {
-  const [dark, setDark] = useState(darkMQ?.matches ?? false);
-  useEffect(() => {
-    if (!darkMQ) return;
-    const handler = (e) => setDark(e.matches);
-    darkMQ.addEventListener('change', handler);
-    return () => darkMQ.removeEventListener('change', handler);
-  }, []);
-  return dark || false;
-}
+import { useState, useEffect, useCallback, useRef } from 'react';
 import { useNavigate } from 'react-router-dom';
 import Layout from '../components/Layout';
 import AddExpenseModal from '../components/AddExpenseModal';
 import { currentMonthStr, monthLabel } from '../utils/date';
 import { formatMoney } from '../utils/money';
 import { useAnimatedValue, useCountUp } from '../hooks/animation';
+import { useToast } from '../components/ToastContext';
 import * as api from '../api';
 import { PieChart, Pie, Cell, BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, Legend, ResponsiveContainer } from 'recharts';
 
 const GREEN = '#32a852';
+
+// Audit P1-50: this file defined a local useDark() reading the system media query, so the
+// manual theme toggle in Layout never reached the page. The only consumer was one text
+// colour in CategoryRow, which Tailwind's dark: variant handles with no JS at all — the
+// hook is gone (AGENTS.md §7.4 says not to copy this pattern).
 
 export default function Dashboard() {
   const [loading, setLoading] = useState(true);
@@ -33,13 +28,19 @@ export default function Dashboard() {
   const [catBudgets, setCatBudgets] = useState([]);
   // Active categories for modal dropdown
   const [activeCategories, setActiveCategories] = useState([]);
-  const isDark = useDark();
   const navigate = useNavigate();
+  const { success, error: toastError } = useToast();
+  // Audit P1-51: switching months quickly fires overlapping requests, and the older response
+  // could land after the newer one and overwrite it. A request id makes the write
+  // conditional on being the latest (YearOverview already had a `cancelled` guard; this is
+  // the same idea for a callback loader).
+  const reqIdRef = useRef(0);
 
   // useCallback keeps the loader stable per month so the effect deps are honest
   // (audit P1-31: exhaustive-deps warning on the fetch effect). Declared before the
   // effect that calls it.
   const loadDashboard = useCallback(async () => {
+    const myId = ++reqIdRef.current;
     setLoading(true);
     try {
       const [data, rawBudgets, catList] = await Promise.all([
@@ -47,6 +48,7 @@ export default function Dashboard() {
         api.getBudgetsViewByMonth(monthStr).catch(e => { console.warn('getBudgetsView failed', e); return []; }),
         api.getCategories(true).catch(() => []),
       ]);
+      if (reqIdRef.current !== myId) return;   // a newer month started; drop this response
       setDashData(data);
       setActiveCategories(catList || []);
       // Map budget response to chart-friendly format
@@ -62,11 +64,12 @@ export default function Dashboard() {
       setCatBudgets(budgetsMapped);
     } catch (e) {
       console.error('loadDashboard error', e);
+      if (reqIdRef.current !== myId) return;
       setDashData(null);
       setActiveCategories([]);
       setCatBudgets([]);
     } finally {
-      setLoading(false);
+      if (reqIdRef.current === myId) setLoading(false);
     }
   }, [monthStr]);
 
@@ -74,9 +77,17 @@ export default function Dashboard() {
   // synchronous setState in the effect body (react-hooks/set-state-in-effect, audit P1-31).
   useEffect(() => { Promise.resolve().then(loadDashboard); }, [monthStr, loadDashboard]);
 
+  // The modal closes right after onSubmit, so a rejected save has to be handled here:
+  // an unhandled rejection used to close the modal with no message at all (ExpensesView
+  // already catches; the Dashboard did not).
   const handleAddExpense = async (data) => {
-    await api.addTransaction(data);
-    loadDashboard();
+    try {
+      await api.addTransaction(data);
+      success(data.type === 'Przychod' ? 'Przychod dodany' : 'Wydatek dodany');
+      loadDashboard();
+    } catch (e) {
+      toastError(e?.message || 'Nie udało się zapisać — sprawdź połączenie z serwerem');
+    }
   };
 
   // Navigation
@@ -122,7 +133,7 @@ export default function Dashboard() {
       <div key={monthStr} className={`page-enter max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8 transition-opacity ${loading ? 'opacity-50 pointer-events-none' : ''}`}>
       {/* Month Navigation */}
       <div className="flex items-center justify-between mb-8">
-        <button onClick={prevMonth} className="p-2 rounded-lg bg-white dark:bg-slate-800 shadow-sm hover:bg-gray-50 dark:hover:bg-slate-700 transition-colors text-gray-600 dark:text-slate-300 border border-gray-200 dark:border-slate-700">
+        <button onClick={prevMonth} aria-label="poprzedni miesiąc" className="p-2 rounded-lg bg-white dark:bg-slate-800 shadow-sm hover:bg-gray-50 dark:hover:bg-slate-700 transition-colors text-gray-600 dark:text-slate-300 border border-gray-200 dark:border-slate-700">
           <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 19l-7-7 7-7" /></svg>
         </button>
         <div className="flex items-center gap-3">
@@ -138,7 +149,7 @@ export default function Dashboard() {
             Dziś
           </button>
         </div>
-       <button onClick={nextMonth} className="p-2 rounded-lg bg-white dark:bg-slate-800 shadow-sm hover:bg-gray-50 dark:hover:bg-slate-700 transition-colors text-gray-600 dark:text-slate-300 border border-gray-200 dark:border-slate-700">
+       <button onClick={nextMonth} aria-label="następny miesiąc" className="p-2 rounded-lg bg-white dark:bg-slate-800 shadow-sm hover:bg-gray-50 dark:hover:bg-slate-700 transition-colors text-gray-600 dark:text-slate-300 border border-gray-200 dark:border-slate-700">
           <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5l7 7-7 7" /></svg>
         </button>
       </div>
@@ -278,7 +289,7 @@ export default function Dashboard() {
         ) : (
           <div className="space-y-4 max-h-[500px] overflow-y-auto pr-2 custom-scrollbar">
             {catBudgets.map((c, idx) => (
-              <CategoryRow key={idx} cat={c} isDark={isDark} />
+              <CategoryRow key={idx} cat={c} />
             ))}
           </div>
         )}
@@ -370,7 +381,7 @@ function StatCard2({ label, change, absDiff: propAbsDiff, monthStr: ms, icon, co
   );
  }
 
-function CategoryRow({ cat, isDark }) {
+function CategoryRow({ cat }) {
   const wydatki = cat.expenditure || 0;
   const budzet = cat.budget || 0;
   
@@ -396,7 +407,7 @@ function CategoryRow({ cat, isDark }) {
         </div>
         <div className="text-right">
           {budzet > 0 && (
-            <p className={`text-xs ${isDark ? 'text-slate-400' : 'text-gray-500'}`}>{wydatki.toFixed(2)} / {budzet} zł</p>
+            <p className="text-xs text-gray-500 dark:text-slate-400">{formatMoney(wydatki)} / {formatMoney(budzet)}</p>
           )}
           <span style={{ color: balance >= 0 ? GREEN : '#dc2626' }} className="text-sm font-bold">
             {(balance > 0 ? '+' : '')}{formatMoney(balance)}

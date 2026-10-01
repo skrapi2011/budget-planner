@@ -2,6 +2,7 @@ import { useState, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
 import Layout from '../components/Layout';
 import { useToast } from '../components/ToastContext';
+import { formatMoney } from '../utils/money';
 import * as api from '../api';
 
 export default function Tags() {
@@ -122,29 +123,39 @@ export default function Tags() {
                   const count = getTaggedTransactions(tag).length;
                   const name = typeof tag === 'string' ? tag : tag.name;
                   return (
-                    <button
+                    // Audit P1-52 (AGENTS.md §9.10): the row used to be a <button> containing
+                    // the rename/delete <button>s. Nested buttons are invalid HTML and React
+                    // warns "In HTML, <button> cannot be a descendant of <button>". The row is
+                    // now a <div>; the label is its own button and the actions are siblings,
+                    // so e.stopPropagation() is no longer needed.
+                    <div
                       key={typeof tag === 'string' ? tag : tag.id}
-                      onClick={() => setSelectedTag(name)}
-                      className={`w-full flex items-center justify-between px-4 py-3 rounded-lg shadow-sm hover:shadow-md transition-all text-left ${
+                      className={`w-full flex items-center justify-between gap-2 px-4 py-3 rounded-lg shadow-sm hover:shadow-md transition-all ${
                         selectedTag === name
                           ? 'bg-[#32a852]/10 border-l-4 border-[#32a852]'
                           : 'bg-white dark:bg-slate-800 hover:bg-gray-50 dark:hover:bg-slate-700'
                       }`}
                     >
-                      <span className="text-sm font-medium text-gray-800 dark:text-slate-200">{name}</span>
-                      <div className="flex items-center gap-2">
+                      <button
+                        onClick={() => setSelectedTag(name)}
+                        className="flex-1 min-w-0 text-left text-sm font-medium text-gray-800 dark:text-slate-200 truncate"
+                        aria-label={`Pokaż transakcje z tagiem ${name}`}
+                      >
+                        {name}
+                      </button>
+                      <div className="flex items-center gap-2 shrink-0">
                         <span className="inline-flex px-2 py-1 text-xs rounded-full bg-[#32a852]/15 text-[#1f8c42] dark:text-[#4ade80]">{count}</span>
                         {typeof tag === 'string' && (
                           <>
                             <button
-                              onClick={(e) => { e.stopPropagation(); startEditing(tag); }}
+                              onClick={() => startEditing(tag)}
                               className="p-1 text-gray-400 hover:text-[#32a852]"
                               aria-label="Zmień nazwę tagu"
                             >
                               <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15.232 5.232l3.536 3.536m-2.036-5.036a2.5 2.5 0 113.536 3.536L6.5 21.036H3v-3.572L16.732 3.732z" /></svg>
                             </button>
                             <button
-                              onClick={(e) => { e.stopPropagation(); removeTag(tag); }}
+                              onClick={() => removeTag(tag)}
                               className="p-1 text-gray-400 hover:text-red-500"
                               aria-label="Usuń tag"
                             >
@@ -153,7 +164,7 @@ export default function Tags() {
                           </>
                         )}
                       </div>
-                    </button>
+                    </div>
                   );
                 })}
 
@@ -227,7 +238,7 @@ function TransactionRow({ tx }) {
       )}
 
       <span className={`font-semibold shrink-0 ${isIncome ? 'text-[#32a852]' : 'text-red-500 dark:text-red-400'} ml-3`}>
-        {Math.abs(Number(tx.amount) || 0).toFixed(2)} PLN
+        {formatMoney(Math.abs(Number(tx.amount) || 0))}
       </span>
 
       <button onClick={() => navigate('/wydatki')} className="ml-3 p-1.5 text-gray-400 hover:text-[#32a852] rounded-md" aria-label="Przejdź do wydatków">

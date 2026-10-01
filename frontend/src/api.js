@@ -126,6 +126,12 @@ export async function updateBudget(id, data) {
   return _fetch(`/budgets/${id}`, { method: 'PUT', headers: getHeaders(true), body: JSON.stringify(data) });
 }
 
+// Audit P1-48: the backend had no DELETE route for budgets, so a budget could only be
+// zeroed. Route + this function + the delete button in Budgets.jsx were added together.
+export async function deleteBudget(id) {
+  return _fetch(`/budgets/${id}`, { method: 'DELETE', headers: getHeaders(true) });
+}
+
 // ---- TRANSACTIONS ----
 
 export async function addTransaction(data) {

@@ -93,7 +93,7 @@ export default function YearOverview() {
       <div key={year} className={`page-enter transition-opacity ${dimmed ? 'opacity-50 pointer-events-none' : ''}`}>
       {/* Year Navigation */}
       <div className="flex items-center justify-between mb-8">
-        <button onClick={prevYear} className="p-2 rounded-lg bg-white dark:bg-slate-800 shadow-sm hover:bg-gray-50 dark:hover:bg-slate-700 transition-colors text-gray-600 dark:text-slate-300 border border-gray-200 dark:border-slate-700">
+        <button onClick={prevYear} aria-label="poprzedni rok" className="p-2 rounded-lg bg-white dark:bg-slate-800 shadow-sm hover:bg-gray-50 dark:hover:bg-slate-700 transition-colors text-gray-600 dark:text-slate-300 border border-gray-200 dark:border-slate-700">
           <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 19l-7-7 7-7" /></svg>
         </button>
         <div className="flex items-center gap-3">
@@ -107,7 +107,7 @@ export default function YearOverview() {
             Ten rok
           </button>
         </div>
-        <button onClick={nextYear} disabled={year >= currentYear()} className="p-2 rounded-lg bg-white dark:bg-slate-800 shadow-sm hover:bg-gray-50 dark:hover:bg-slate-700 transition-colors text-gray-600 dark:text-slate-300 border border-gray-200 dark:border-slate-700 disabled:opacity-40 disabled:cursor-not-allowed" title={year >= currentYear() ? 'Nie można przejść do lat przyszłych' : undefined}>
+        <button onClick={nextYear} aria-label="następny rok" disabled={year >= currentYear()} className="p-2 rounded-lg bg-white dark:bg-slate-800 shadow-sm hover:bg-gray-50 dark:hover:bg-slate-700 transition-colors text-gray-600 dark:text-slate-300 border border-gray-200 dark:border-slate-700 disabled:opacity-40 disabled:cursor-not-allowed" title={year >= currentYear() ? 'Nie można przejść do lat przyszłych' : undefined}>
           <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5l7 7-7 7" /></svg>
         </button>
       </div>

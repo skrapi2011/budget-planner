@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback } from 'react';
+import { useState, useEffect, useCallback, useRef } from 'react';
 import { useSearchParams } from 'react-router-dom';
 import Layout from '../components/Layout';
 import AddExpenseModal from '../components/AddExpenseModal';
@@ -34,11 +34,15 @@ import { useToast } from '../components/ToastContext';
   // Empty by default → every section starts collapsed. Kept across data
   // reloads (add/delete/month change) so the list doesn't snap shut under the cursor.
   const [expandedCategories, setExpandedCategories] = useState({});
+  // Audit P1-51: request id guard, so a slow response for an older month cannot overwrite
+  // the data of the month the user has since switched to.
+  const reqIdRef = useRef(0);
 
   // useCallback keeps the loader stable per month so the effect deps are honest
   // (audit P1-31: exhaustive-deps warning on the fetch effect). Declared before the
   // effect that calls it.
   const loadExpenses = useCallback(async () => {
+    const myId = ++reqIdRef.current;
     setLoading(true);
     try {
       const catsPromise = api.getCategories(true).catch(() => []);
@@ -46,13 +50,17 @@ import { useToast } from '../components/ToastContext';
       // the current month, so switching months would show stale data.
       const txnsPromise = api.getTransactions(monthStr).catch(() => []);
       const [catList, txnList] = await Promise.all([catsPromise, txnsPromise]);
+      if (reqIdRef.current !== myId) return;   // a newer month started; drop this response
       setCategories(catList || []);
       setTransactions(txnList || []);
     } catch {
+      if (reqIdRef.current !== myId) return;
       setTransactions([]);
     } finally {
-      setLoading(false);
-      setHasLoaded(true);
+      if (reqIdRef.current === myId) {
+        setLoading(false);
+        setHasLoaded(true);
+      }
     }
   }, [monthStr]);
 
@@ -251,7 +259,7 @@ import { useToast } from '../components/ToastContext';
                   </svg>
                   {g.icon && <span>{g.icon}</span>}
                   <span className="font-medium text-gray-800 dark:text-slate-200 flex items-center gap-2">
-                    {g.name} <span className="text-sm font-normal text-gray-400 dark:text-slate-500">({g.total.toFixed(2)} PLN)</span>
+                    {g.name} <span className="text-sm font-normal text-gray-400 dark:text-slate-500">({formatMoney(g.total)})</span>
                     <span className="text-xs px-1.5 py-0.5 rounded-full bg-white/70 text-gray-500 dark:bg-slate-900/50 dark:text-slate-400">{g.transactions.length}</span>
                   </span>
                 </button>
@@ -274,7 +282,7 @@ import { useToast } from '../components/ToastContext';
                     <div className="flex items-center gap-3 shrink-0 ml-4">
                       <time className="text-xs text-gray-400 whitespace-nowrap">{tx.date}</time>
                       <span className={`font-semibold whitespace-nowrap ${tx.type === 'Przychod' ? 'text-[#32a852]' : 'text-red-500 dark:text-red-400'}`}>
-                        {Number(tx.amount).toFixed(2)} PLN
+                        {formatMoney(tx.amount)}
                       </span>
                       <button onClick={() => openEditor(tx)} className="p-1.5 text-gray-400 hover:text-[#32a852] transition-colors rounded-md hover:bg-[#32a852]/10 group" aria-label="Edytuj transakcję" title="Edytuj">
                         <svg className="w-4 h-4 opacity-50 group-hover:opacity-100 transition-opacity" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M11 5H6a2 2 0 00-2 2v11a2 2 0 002 2h11a2 2 0 002-2v-5m-1.414-9.414a2 2 0 112.828 2.828L11.828 17H9v-2.828l8.586-8.586z" /></svg>
