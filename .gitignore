@@ -29,6 +29,9 @@ wheels/
 # Byte-compiled / optimized
 **/*.pyc
 
+# pytest
+.pytest_cache/
+
 # Node.js frontend
 frontend/node_modules/
 frontend/dist/
