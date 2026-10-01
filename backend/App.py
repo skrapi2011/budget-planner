@@ -1,5 +1,6 @@
 import os
 import json
+import re
 import calendar
 import random
 import jwt as pyjwt
@@ -135,12 +136,49 @@ def normalize_tags(raw):
     return None
 
 
+HEX_COLOR_RE = re.compile(r"^#[0-9a-fA-F]{6}$")
+DEFAULT_CATEGORY_COLOR = "#64748b"
+
+
+def normalize_color(raw):
+    """Return a `#rrggbb` colour, falling back to a neutral slate when the value is
+    empty or malformed (audit P1-27: `color=''` was accepted, so charts and the legend
+    rendered with no colour). Returns (color, ok) where ok is False for unusable input.
+    """
+    s = (raw or "").strip()
+    if not s:
+        return DEFAULT_CATEGORY_COLOR, False
+    if HEX_COLOR_RE.match(s):
+        return s, True
+    return DEFAULT_CATEGORY_COLOR, False
+
+
+def find_duplicate_category(conn, user_id, name, exclude_id=None):
+    """Case-insensitive duplicate check per user (audit P1-27).
+
+    The schema has no UNIQUE on (user_id, name), so `except IntegrityError -> 409` in
+    create_category was dead code: a second POST with the same name returned 201.
+    """
+    row = conn.execute(
+        "SELECT id, name FROM Categories WHERE user_id=? AND name COLLATE NOCASE = ?",
+        (user_id, name.strip()),
+    ).fetchone()
+    if row and (exclude_id is None or row["id"] != exclude_id):
+        return row
+    return None
+
+
 def seed_categories(conn):
     _seed_categories_for_user(conn, 1)
 
 
 CATEGORY_NAMES = ["Jedzenie", "Transport", "Mieszkanie", "Rozrywka", "Zdrowie",
                   "Edukacja", "Ubrania", "Telefon / Internet", "Czynsz", "Prezent"]
+
+# Polish month names in calendar order — mirrors MONTH_NAMES in frontend/src/utils/date.js
+# (audit P1-30: the list was duplicated in 4 frontend pages plus this one).
+MONTH_NAMES_PL = ["Styczeń", "Luty", "Marzec", "Kwiecień", "Maj", "Czerwiec",
+                  "Lipiec", "Sierpień", "Wrzesień", "Październik", "Listopad", "Grudzień"]
 
 SEED_BASE_AMOUNT = 150.0
 
@@ -434,6 +472,16 @@ def create_category():
 
     conn = get_connection()
     try:
+        # Audit P1-27: the IntegrityError -> 409 branch was dead (no UNIQUE on
+        # (user_id, name)), so duplicates were accepted with 201.
+        dup = find_duplicate_category(conn, g.current_user_id, name)
+        if dup:
+            return jsonify({"error": f"Category „{dup['name']}” already exists"}), 409
+        raw_color = color
+        color, color_ok = normalize_color(raw_color)
+        if not color_ok and raw_color:
+            # Empty color is silently defaulted; an explicit non-hex value is rejected.
+            return jsonify({"error": "Color must be a hex value like #e74c3c"}), 400
         cur = conn.execute(
             "INSERT INTO Categories (name, color, icon, user_id) VALUES (?,?,?,?)",
             (name, color, icon, g.current_user_id),
@@ -470,6 +518,22 @@ def update_category(cid):
         ).fetchone()
         if not existing:
             return jsonify({"error": "Not found"}), 404
+
+        # Audit P1-27: renaming onto an existing category name was allowed.
+        if data.get("name") is not None:
+            new_name = str(data["name"]).strip()
+            if not new_name:
+                return jsonify({"error": "Name required"}), 400
+            dup = find_duplicate_category(conn, g.current_user_id, new_name, exclude_id=cid)
+            if dup:
+                return jsonify({"error": f"Category „{dup['name']}” already exists"}), 409
+            data["name"] = new_name
+
+        if data.get("color") is not None:
+            norm, color_ok = normalize_color(data["color"])
+            if not color_ok:
+                return jsonify({"error": "Color must be a hex value like #e74c3c"}), 400
+            data["color"] = norm
 
         up_keys = ["name", "color", "icon", "default_order", "active"]
         set_clauses = []
@@ -1102,26 +1166,43 @@ def dashboard_data():
             base_mon = ((now.month - 1 - m_off) % 12) + 1
             year_month_list.append((base_year, base_mon, calendar.month_name[base_mon]))
 
+        # Audit P1-33: this loop used to run 2 queries per month (26 per request).
+        # One grouped query per table covers the whole 13-month window.
+        year_month_list.reverse()
+        oldest_y, oldest_m = year_month_list[0][0], year_month_list[0][1]
+        newest_y, newest_m = year_month_list[-1][0], year_month_list[-1][1]
+        window_first = f"{oldest_y}-{str(oldest_m).zfill(2)}-01"
+        nxt_after_newest = datetime(newest_y, newest_m, 1) + timedelta(days=32)
+        window_end = f"{nxt_after_newest.year}-{str(nxt_after_newest.month).zfill(2)}-01"
+
+        spend_by_month = {
+            r["ym"]: float(r["t"]) if r["t"] else 0.0
+            for r in conn.execute(
+                """SELECT strftime('%Y-%m', date) AS ym, SUM(amount) AS t
+                   FROM Transactions
+                   WHERE user_id=? AND type='wydatek' AND date>=? AND date<?
+                   GROUP BY ym""",
+                (g.current_user_id, window_first, window_end),
+            ).fetchall()
+        }
+        budget_by_month = {
+            r["my"]: float(r["t"]) if r["t"] else 0.0
+            for r in conn.execute(
+                """SELECT month_year AS my, SUM(amount_monthly) AS t
+                   FROM Budgets
+                   WHERE user_id=? AND month_year>=? AND month_year<?
+                   GROUP BY month_year""",
+                (g.current_user_id, window_first[:7], window_end[:7]),
+            ).fetchall()
+        }
+
         months_history = []
-        for yy, mm, mon_name in reversed(year_month_list):
-            first_d = f"{yy}-{str(mm).zfill(2)}-01"
-            nxt_d_dt = datetime(yy, mm, 1) + timedelta(days=32)
-            next_d = f"{nxt_d_dt.year}-{str(nxt_d_dt.month).zfill(2)}-01"
-
-            row = conn.execute(
-                "SELECT SUM(amount) AS t FROM Transactions WHERE user_id=? AND type='wydatek' AND date>=? AND date<?",
-                (g.current_user_id, first_d, next_d),
-            ).fetchone()
-
-            budget_row = conn.execute(
-                "SELECT COALESCE(SUM(amount_monthly), 0) AS t FROM Budgets WHERE user_id=? AND month_year=?",
-                (g.current_user_id, f"{yy}-{str(mm).zfill(2)}"),
-            ).fetchone()
-
+        for yy, mm, mon_name in year_month_list:
+            key = f"{yy}-{str(mm).zfill(2)}"
             months_history.append({
                 "label": mon_name + " " + str(yy)[-2:],
-                "actual": round(float(row["t"]) if row and row["t"] else 0, 2),
-                "planned": round(float(budget_row["t"]) if budget_row and budget_row["t"] else 0, 2),
+                "actual": round(spend_by_month.get(key, 0.0), 2),
+                "planned": round(budget_by_month.get(key, 0.0), 2),
             })
 
         return jsonify({
@@ -1198,13 +1279,22 @@ def year_summary():
             mk = br["month_year"][:7]
             budget_map[mk] = val
 
-        month_names_pl = [
-            "Styczeń", "Luty", "Marzec", "Kwiecień", "Maj", "Czerwiec",
-            "Lipiec", "Sierpień", "Wrzesień", "Październik", "Listopad", "Grudzień"
-        ]
+        month_names_pl = MONTH_NAMES_PL
 
         now = datetime.now()
         
+        # Audit P1-33: one grouped query replaces the 12 per-month SUM(amount) queries.
+        spend_by_month = {
+            r["ym"]: float(r["t"]) if r["t"] else 0.0
+            for r in conn.execute(
+                """SELECT strftime('%Y-%m', date) AS ym, SUM(amount) AS t
+                   FROM Transactions
+                   WHERE user_id=? AND type='wydatek' AND date>=? AND date<?
+                   GROUP BY ym""",
+                (g.current_user_id, f"{start_year}-01-01", next_year_start_date),
+            ).fetchall()
+        }
+
         monthly_summary = []
         for m in range(1, 13):
             month_key = f"{start_year}-{str(m).zfill(2)}"
@@ -1213,17 +1303,7 @@ def year_summary():
                 break
                 
             mon_budgeted = budget_map.get(month_key, 0)
-
-            first_d = f"{month_key}-01"
-            nxt_m_dt = datetime(start_year, m, 1) + timedelta(days=32)
-            next_d_final = f"{nxt_m_dt.year}-{str(nxt_m_dt.month).zfill(2)}-01"
-
-            srow = conn.execute(
-                "SELECT SUM(amount) AS t FROM Transactions WHERE user_id=? AND type='wydatek' AND date>=? AND date<?",
-                (g.current_user_id, first_d, next_d_final),
-            ).fetchone()
-
-            actual = round(float(srow["t"]) if srow and srow["t"] else 0, 2)
+            actual = round(spend_by_month.get(month_key, 0.0), 2)
             monthly_summary.append({
                 "month": m,
                 "label": month_names_pl[m - 1],

@@ -101,5 +101,12 @@ SCHEMA = [
         description TEXT DEFAULT '',
         tags TEXT DEFAULT '[]',
         created_at DATETIME DEFAULT CURRENT_TIMESTAMP
-    )"""
+    )""",
+
+    # Audit P1-34: every aggregate filters user_id + a date range (or user_id + type),
+    # and with no index that is a full table scan per request. Idempotent, so they are
+    # applied to existing DBs on startup as well.
+    """CREATE INDEX IF NOT EXISTS ix_tx_user_date ON Transactions(user_id, date)""",
+    """CREATE INDEX IF NOT EXISTS ix_tx_user_type ON Transactions(user_id, type)""",
+    """CREATE INDEX IF NOT EXISTS ix_bud_user_month ON Budgets(user_id, month_year)"""
 ]
