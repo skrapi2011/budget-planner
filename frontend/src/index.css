@@ -77,6 +77,58 @@ a[href],
   cursor: pointer;
 }
 
+/* ---------- Theme transition (smooth circular wipe from the toggle) ---------- */
+:root {
+  --theme-switch-ms: 500ms;
+}
+
+/* Path A — browsers with the View Transitions API. The old snapshot stays put below
+   and the new theme wipes in as a circle centred on the toggle button; ThemeProvider
+   writes --theme-x / --theme-y from the button's bounding box. */
+::view-transition-group(root) {
+  animation-duration: var(--theme-switch-ms);
+  animation-timing-function: cubic-bezier(0.4, 0, 0.2, 1);
+}
+::view-transition-old(root),
+::view-transition-new(root) {
+  animation: none;
+  mix-blend-mode: normal;
+}
+::view-transition-old(root) { z-index: 1; }
+::view-transition-new(root) {
+  z-index: 2;
+  animation: theme-wipe var(--theme-switch-ms) cubic-bezier(0.4, 0, 0.2, 1) both;
+}
+@keyframes theme-wipe {
+  from { clip-path: circle(0% at var(--theme-x, 50%) var(--theme-y, 0%)); }
+  to   { clip-path: circle(150% at var(--theme-x, 50%) var(--theme-y, 0%)); }
+}
+
+/* Path B — no View Transitions API (older Firefox/Safari): cross-fade every colour in
+   the tree for one beat. Scoped to the toggle via .theme-transition so hover/focus
+   transitions keep their own timing, and ThemeProvider drops the class when it ends. */
+.theme-transition,
+.theme-transition *,
+.theme-transition *::before,
+.theme-transition *::after {
+  transition: background-color var(--theme-switch-ms) ease,
+    border-color var(--theme-switch-ms) ease,
+    color var(--theme-switch-ms) ease,
+    fill var(--theme-switch-ms) ease,
+    stroke var(--theme-switch-ms) ease,
+    box-shadow var(--theme-switch-ms) ease,
+    scrollbar-color var(--theme-switch-ms) ease !important;
+}
+
+/* The sun/moon icon spins in on every switch (keyed remount in Layout.jsx). */
+@keyframes theme-icon-swap {
+  from { transform: rotate(-90deg) scale(0.4); opacity: 0; }
+  to   { transform: rotate(0deg) scale(1); opacity: 1; }
+}
+.theme-icon-swap {
+  animation: theme-icon-swap var(--theme-switch-ms) cubic-bezier(0.32, 0.72, 0, 1) both;
+}
+
 /* ---------- Animacje (audyt UI/UX) ---------- */
 @keyframes fade-slide-in {
   from { opacity: 0; transform: translateY(8px); }
@@ -116,7 +168,16 @@ a[href],
 
 @media (prefers-reduced-motion: reduce) {
   .page-enter, .toast-enter, .toast-exit, .modal-panel-in, .backdrop-in,
-  .stagger-children > * {
+  .stagger-children > *,
+  .theme-icon-swap {
     animation: none;
   }
+  /* ThemeProvider also skips startViewTransition here — these are the belt-braces. */
+  ::view-transition-group(root),
+  ::view-transition-old(root),
+  ::view-transition-new(root) { animation: none; }
+  .theme-transition,
+  .theme-transition *,
+  .theme-transition *::before,
+  .theme-transition *::after { transition: none !important; }
 }
