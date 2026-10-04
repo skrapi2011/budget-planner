@@ -262,6 +262,24 @@ describe('donut: category structure and deep links', () => {
     expect(screen.getByText('440,00 zł')).toBeInTheDocument();
   });
 
+  it('the pie container has a definite width, so the chart renders and the sum stays centred', async () => {
+    renderDashboard();
+    await screen.findByText('Budżet miesięczny');
+    const rc = document.querySelector('.recharts-responsive-container');
+    expect(rc).not.toBeNull();
+    // ResponsiveContainer is width:100% with min-width:0, and its inner div is width:0 (so a
+    // ResizeObserver can detect shrinking). Inside an auto-width flex item the percentage is
+    // unresolvable, so recharts gets width 0, renders nothing (isAcceptableSize rejects it),
+    // and the absolute Suma overlay at left:50% lands on the category list.
+    const box = rc.parentElement;
+    expect(box.className).toMatch(/w-\[[\d.]+px\]|w-full/);
+    expect(box.className).not.toMatch(/(^|\s)sm:w-auto(\s|$)/);
+    // The sum overlay is positioned against that box, so it needs a width to centre in.
+    const overlay = box.querySelector('div[style*="margin-left"]');
+    expect(overlay).not.toBeNull();
+    expect(overlay.style.left).toBe('50%');
+  });
+
   it('clicking a category deep-links to ExpensesView with the category and the viewed month', async () => {
     const user = userEvent.setup();
     renderDashboard();

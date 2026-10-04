@@ -207,7 +207,13 @@ export default function Dashboard() {
                   ))}
                 </div>
                 {/* Pie chart on the right */}
-                <div className="relative w-full sm:w-auto sm:shrink-0">
+                {/* Needs a definite width: ResponsiveContainer width="100%" renders an inner
+                    div with width:0 (so ResizeObserver can detect shrinking), so a percentage
+                    inside an auto-width flex item resolves to 0 and recharts renders nothing
+                    (isAcceptableSize rejects width<=0). The Suma overlay is absolute at
+                    left:50% of that box, so a 0-width box also pushed it onto the category
+                    list. w-full resolves against the flex column; sm:w-[280px] is explicit. */}
+                <div className="relative w-full min-w-0 sm:w-[280px] sm:shrink-0">
                   <ResponsiveContainer width="100%" height={260}>
                     <PieChart>
                       <Pie
