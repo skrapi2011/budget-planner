@@ -27,4 +27,30 @@ export default defineConfig([
       'no-empty': ['error', { allowEmptyCatch: true }],
     },
   },
+  // Vitest globals (describe/it/expect/beforeEach/…) exist only inside the colocated
+  // test files and the test setup; declaring them repo-wide would let production code
+  // reach for them.
+  {
+    files: ['src/**/*.test.{js,jsx}', 'src/test/**/*.js', 'src/test/**/*.jsx'],
+    languageOptions: {
+      globals: {
+        ...globals.browser,
+        describe: 'readonly',
+        it: 'readonly',
+        test: 'readonly',
+        expect: 'readonly',
+        vi: 'readonly',
+        beforeEach: 'readonly',
+        afterEach: 'readonly',
+        beforeAll: 'readonly',
+        afterAll: 'readonly',
+        suite: 'readonly',
+        process: 'readonly',
+      },
+    },
+    rules: {
+      // Test files export helpers, not components — react-refresh has nothing to refresh.
+      'react-refresh/only-export-components': 'off',
+    },
+  },
 ])

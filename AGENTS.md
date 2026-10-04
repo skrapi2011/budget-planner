@@ -35,6 +35,7 @@ budget-planner/
 │   ├── database.py            ← SQLite schema (SCHEMA list) + get_connection() factory
 │   ├── requirements.txt       ← Flask / PyJWT / flask-cors / pytest
 │   ├── __init__.py            ← empty
+│   ├── tests/                 ← pytest suite (conftest.py sets DATABASE_PATH before App import)
 │   └── data/baza.db           ← SQLite DB (gitignored; auto-created on first run)
 └── frontend/
     ├── index.html             ← contains anti-FOUC dark-mode script — keep in sync with ThemeContext
@@ -63,6 +64,9 @@ budget-planner/
         ├── utils/
         │   ├── date.js        ← currentMonthStr() / currentYear() / monthLabel() / MONTH_NAMES
         │   └── money.js       ← formatMoney() — the single PLN formatter
+        ├── test/                ← renderWithProviders() harness + setup.js (matchMedia, localStorage)
+        │   ⚠️ tests are colocated with the code they test: utils/date.test.js,
+        │   components/AddBudgetModal.test.jsx, pages/Budgets.test.jsx, …
         └── pages/             ← one file per route, all lazy-loaded
             ├── LoginPage.jsx  RegisterPage.jsx
             ├── Dashboard.jsx  ExpensesView.jsx  CategoriesView.jsx
@@ -393,10 +397,26 @@ Route paths are **Polish and part of the contract** — don't rename them withou
 
 ## 8. Verification workflow
 
-There is **no test suite and no CI**. Verify changes this way, in order:
+There is **no CI**, but there **is a test suite** (added after the second audit round):
+**255 backend + 335 frontend tests, all green.** A green run is the pre-existing state — if a
+change breaks one, fix the code, not the assertion.
 
+```bash
+python -m pytest backend/tests            # backend: Flask test client + isolated temp DB
+python -m pytest backend/tests -v         # per-case output
+cd frontend && npm test                   # Vitest + Testing Library (jsdom)
+cd frontend && npm test -- --run          # single run (no watch)
+```
+
+- `backend/tests/conftest.py` sets `DATABASE_PATH` to a per-session temp file **before**
+  importing `App.py`, which is what makes the module-level `init_db()` side effect (§3) safe.
+  Never import `App` outside that harness.
+- Frontend tests live next to the code they test (`src/utils/date.test.js`,
+  `src/components/AddBudgetModal.test.jsx`, …). Vitest reuses **`vite.config.js`** (its `test`
+  block sets `environment: 'jsdom'`, `globals: true`, `setupFiles`), so the JSX transform and
+  the Tailwind plugin are identical to the dev/build pipeline. `src/test/setup.js` pins
+  `NODE_ENV=test`, stubs `matchMedia` and clears `localStorage` between tests.
 - `npm run lint` is clean for `src/` and for `eslint .` (`dist`/`dist_probe` are ignored).
-
 
 For changes the suite does not cover, verify manually in this order:
 
@@ -418,6 +438,9 @@ For changes the suite does not cover, verify manually in this order:
    page in `npm run dev` (backend must be running for real data).
 3. **DB sanity:** `sqlite3 backend/data/baza.db "SELECT * FROM Transactions ORDER BY id DESC LIMIT 5;"`
 4. After manual tests, delete test rows or reset the DB (§3) so demo data stays clean.
+5. Keep the suites honest: a new endpoint gets a `backend/tests/` case, a new page component
+   gets a `frontend` case. If you fix a bug, add the failing case first (the AddBudgetModal TDZ
+   crash is the example — `npm run build` and lint both passed while the modal was dead).
 
 ---
 
@@ -480,7 +503,8 @@ For changes the suite does not cover, verify manually in this order:
 2. Validate input up front; return JSON errors with proper status codes — **in Polish** (§6.3).
 3. Add a matching function to `frontend/src/api.js` (snake_case body keys) and use it from
    the page — never fetch directly.
-4. Verify with curl against the dev server (§8 step 1), then in the frontend.
+4. Add a case to `backend/tests/` (auth, user isolation, the happy path, and the 400/404 path).
+5. Verify with `python -m pytest backend/tests`, then in the dev server.
 
 ### Add a new page/route
 1. Create `frontend/src/pages/<Name>View.jsx` (default export, `Layout` wrapper like other
@@ -488,7 +512,8 @@ For changes the suite does not cover, verify manually in this order:
 2. Register it in `App.jsx`: `lazy(() => import('./pages/...'))` + a `<Route>` inside
    `ProtectedRoute`.
 3. Add the menu entry to `navItems` in `components/Layout.jsx`.
-4. `npm run lint && npm run build`, then exercise the page in `npm run dev`.
+4. Add a `frontend` test for the render + the main interaction (colocated `*.test.jsx`).
+5. `npm run lint && npm run build && npm test`.
 
 ### Change an API contract (field names/shapes)
 Update **both** sides atomically: backend route + `api.js` function + every page using it.
