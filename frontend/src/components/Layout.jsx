@@ -9,7 +9,8 @@ const navItems = [
   { to: '/kategorie', label: 'Kategorie' },
   { to: '/budzety', label: 'Budżety' },
   { to:'/tags', label: 'Tagi' },
-]
+   { to:'/year', label: 'Roczny Przegląd' },
+ ]
 
 export default function Layout({ children, username }) {
   const [menuOpen, setMenuOpen] = useState(false)

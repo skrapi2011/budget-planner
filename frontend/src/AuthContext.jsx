@@ -13,15 +13,20 @@ export function AuthProvider({ children }) {
     setToken(localStorage.getItem('token'));
   };
 
-  const handleLogout = async () => {
-    try { await api.logout(); } catch {}
+  const clearSession = () => {
+    // Synchronous, no network — used when the backend reports an expired token.
     localStorage.removeItem('token');
     localStorage.removeItem('user');
     setUser(null);
     setToken(null);
   };
 
-  return <AuthContext.Provider value={{ user, token, login: handleLogin, logout: handleLogout }}>{children}</AuthContext.Provider>;
+  const handleLogout = async () => {
+    try { await api.logout(); } catch {}
+    clearSession();
+  };
+
+  return <AuthContext.Provider value={{ user, token, login: handleLogin, logout: handleLogout, clearSession }}>{children}</AuthContext.Provider>;
 }
 
 export function useAuth() {

@@ -1,10 +1,14 @@
 import { useState } from 'react';
 import { useAuth } from '../AuthContext';
-import { useNavigate } from 'react-router-dom';
+import { useNavigate, useLocation } from 'react-router-dom';
+import SessionExpiredToast from '../components/SessionExpiredToast';
 
 export default function LoginPage() {
   const auth = useAuth();
   const navigate = useNavigate();
+  const location = useLocation();
+  // Set by the global session-expired handler (App.jsx) when redirecting here.
+  const [showSessionExpired, setShowSessionExpired] = useState(() => Boolean(location.state?.sessionExpired));
   const [username, setUsername] = useState('');
   const [password, setPassword] = useState('');
   const [error, setError] = useState('');
@@ -25,6 +29,7 @@ export default function LoginPage() {
 
   return (
     <div className="min-h-screen flex items-center justify-center bg-gradient-to-br from-green-50 to-emerald-100 dark:from-slate-900 dark:to-slate-800">
+      <SessionExpiredToast open={showSessionExpired} onDismiss={() => setShowSessionExpired(false)} />
       <div className="w-full max-w-sm p-8 m-auto bg-white rounded-lg shadow-md dark:bg-slate-800">
         <div className="text-center mb-6">
           <h1 className="text-2xl font-bold text-gray-900 dark:text-white">Planowanie Wydatków</h1>

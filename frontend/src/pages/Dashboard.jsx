@@ -1,5 +1,4 @@
-import { useState, useEffect, useMemo } from 'react';
-
+import { useState, useEffect } from 'react';
 let darkMQ = typeof window !== 'undefined' ? window.matchMedia('(prefers-color-scheme: dark)') : null;
 function useDark() {
   const [dark, setDark] = useState(darkMQ?.matches ?? false);
@@ -12,7 +11,7 @@ function useDark() {
   return dark || false;
 }
 import Layout from '../components/Layout';
-import ModalDodajWydatek from '../components/ModalDodajWydatek';
+import AddExpenseModal from '../components/AddExpenseModal';
 import * as api from '../api';
 import { PieChart, Pie, Cell, BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, Legend, ResponsiveContainer } from 'recharts';
 
@@ -22,7 +21,6 @@ const MONTH_NAMES = [
 ];
 
 const GREEN = '#32a852';
-const HOVER_GREEN = '#1f8c42';
 
 function getCurrentMonth() {
   const now = new Date();
@@ -105,66 +103,76 @@ export default function Dashboard({ user }) {
   };
 
   if (loading || !dashData) {
-    return (
-      <Layout username={user}>
-        <div className="flex items-center justify-center py-24">
-          <div className="w-10 h-10 border-4 border-gray-200 border-t-[#32a852] rounded-full animate-spin" />
-        </div>
-      </Layout>
-    );
+    return <Layout username={user}><div className="flex items-center justify-center py-24"><div className="w-10 h-10 border-4 border-gray-200 border-t-[#32a852] rounded-full animate-spin" /></div></Layout>;
   }
 
-  const { total_all_time = 0, month_total = 0, planned_all_time = 0, current_planned = 0, chart_data = [], monthly_history = [] } = dashData;
+  const { total_all_time = 0, prev_month_total = 0, month_total = 0, planned_all_time = 0, current_planned = 0, chart_data = [], monthly_history = [] } = dashData;
+
+  function getPrevMonthLabel() {
+    const [y, m] = monthStr.split('-').map(Number);
+    if (m === 1) return `${MONTH_NAMES[11]} ${y - 1}`;
+    return MONTH_NAMES[m - 2];
+  }
+
+  function getChangePct(current, previous) {
+    if ((previous ?? 0) === 0) return current > 0 ? null : 0;
+    const diff = ((current - previous) / previous) * 100;
+    return Math.round(diff);
+  }
+
+  const changePct = getChangePct(month_total, prev_month_total);
 
   return (
     <Layout username={user}>
       {/* Month Navigation */}
       <div className="flex items-center justify-between mb-8">
-        <button onClick={prevMonth} className="p-2 rounded-lg bg-white dark:bg-slate-800 shadow-sm hover:bg-gray-50 dark:hover:bg-slate-700 transition-colors text-gray-600 dark:text-slate-300 border border-gray-200 dark:border-slate-700">
+        <button onClick={prevMonth} className="p-2 rounded-lg bg-white dark:bg-slate-800 shadow-sm hover:bg-gray-50 dark:hover:slate-700 transition-colors text-gray-600 dark:text-slate-300 border border-gray-200 dark:border-slate-700">
           <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 19l-7-7 7-7" /></svg>
         </button>
         <h2 className="text-xl font-bold text-gray-800 dark:text-slate-200">
           {MONTH_NAMES[parseInt(monthStr.split('-')[1], 10) - 1]} {monthStr.split('-')[0]}
         </h2>
-       <button onClick={nextMonth} className="p-2 rounded-lg bg-white dark:bg-slate-800 shadow-sm hover:bg-gray-50 dark:hover:bg-slate-700 transition-colors text-gray-600 dark:text-slate-300 border border-gray-200 dark:border-slate-700">
+       <button onClick={nextMonth} className="p-2 rounded-lg bg-white dark:bg-slate-800 shadow-sm hover:bg-gray-50 dark:hover:slate-700 transition-colors text-gray-600 dark:text-slate-300 border border-gray-200 dark:border-slate-700">
           <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5l7 7-7 7" /></svg>
         </button>
       </div>
 
       {/* Stat Cards */}
       <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-6 mb-8">
-        <StatCard label={`Wydatki całość (${monthStr.split('-')[0]})`} value={total_all_time} badge={monthStr.split('-')[0]} icon={<IconAllTime />} color="#ef4444" />
-        <StatCard label="Wydatki w tym miesiącu" value={month_total} badge={`${MONTH_NAMES[parseInt(monthStr.split('-')[1], 10) - 1]}`} icon={<IconMonth />} color="#3b82f6" />
-        <StatCard label={`Planowane całość (${monthStr.split('-')[0]})`} value={planned_all_time} badge={monthStr.split('-')[0]} icon={<IconPlanned />} color="#f59e0b" />
-        <StatCard label="Budżet miesięczny" value={current_planned} badge={`${MONTH_NAMES[parseInt(monthStr.split('-')[1], 10) - 1]}`} icon={<IconCurrent />} color="#8b5cf6" />
+        <StatCard label="Budżet miesięczny" value={current_planned} icon={<IconCurrent />} color="#8b5cf6" />
+        <StatCard label="Wydatki w tym miesiącu" value={month_total} icon={<IconMonth />} color="#3b82f6" />
+        <StatCard2 label="Zmiana wydatków" change={changePct} absDiff={month_total - prev_month_total} monthStr={monthStr} icon={<IconChange />} color={changePct !== null ? (changePct > 0 ? '#ef4444' : '#32a852') : 'var(--tw-text-muted)'} />
+        <StatCard label="Wydatki całość" value={total_all_time} icon={<IconAllTime />} color="#ef4444" />
       </div>
 
       {/* Charts Row */}
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-6 mb-8">
         {/* Donut Chart */}
-        <Card title="Struktura wydatków według kategorii (wszystkie lata)">
-          {chart_data.length === 0 ? (
-            <p className="text-center text-gray-400 dark:text-slate-500 py-12">Brak danych. Dodaj transakcje aby zobaczyć wykres.</p>
-          ) : (() => {
-            const sorted = [...chart_data].sort((a, b) => (b.value || 0) - (a.value || 0));
-            return (
-            <div className="flex items-center gap-6">
-               {/* Category list on the left */}
-<div 
-                style={{ 
-                  maxHeight: '260px', 
-                  minWidth: '160px', 
-                  overflowY: 'auto'
-                }}
-                 className="no-scrollbar space-y-2 shrink-0 rounded-xl border border-gray-300 dark:border-slate-600 p-4"
-              >
+        <Card title="Struktura wydatków według kategorii">
+          {(() => {
+            const monthCat = catBudgets.filter(c => (Number(c.expenditure) || 0) > 0);
+            if (monthCat.length === 0) return <p className="text-center text-gray-400 dark:text-slate-500 py-12">Brak danych. Dodaj transakcje aby zobaczyć wykres.</p>;
 
-                  {sorted.map((item) => (
+            const sorted = [...monthCat].sort((a, b) => (b.expenditure || 0) - (a.expenditure || 0));
+            const monthTotal = monthCat.reduce((s, c) => s + (Number(c.expenditure)||0), 0);
+
+            return (
+              <div className="flex items-center gap-6">
+                {/* Category list on the left */}
+<div 
+                  style={{ 
+                    maxHeight: '260px', 
+                    minWidth: '160px', 
+                    overflowY: 'auto'
+                  }}
+                   className="no-scrollbar space-y-2 shrink-0 rounded-xl border border-gray-300 dark:border-slate-600 p-4"
+                >
+{sorted.map((item) => (
                     <div key={item.name} className="flex items-center gap-2 py-1">
                       <span style={{ backgroundColor: item.color || '#94a3b8' }} className="w-3 h-3 rounded-full shrink-0" />
                       <div className="flex flex-col">
                         <span className="text-sm font-medium text-gray-700 dark:text-slate-200">{item.name}</span>
-                        <span className="text-xs text-gray-400 dark:text-slate-500">{formatMoney(item.value)}</span>
+                        <span className="text-xs text-gray-400 dark:text-slate-500">{formatMoney(item.expenditure)}</span>
                       </div>
                     </div>
                   ))}
@@ -174,7 +182,7 @@ export default function Dashboard({ user }) {
                   <ResponsiveContainer width={280} height={260}>
                     <PieChart>
                       <Pie
-                        data={chart_data}
+                        data={sorted.map(c => ({ name: c.name, value: Number(c.expenditure) || 0, color: c.color }))}
                         cx="50%"
                         cy="50%"
                         outerRadius="85%"
@@ -185,7 +193,7 @@ export default function Dashboard({ user }) {
                         nameKey="name"
                         stroke="none"
                       >
-                        {chart_data.map((entry, i) => (
+                        {sorted.map((entry, i) => (
                           <Cell key={`cell-${i}`} fill={entry.color || '#94a3b8'} />
                         ))}
                       </Pie>
@@ -196,7 +204,7 @@ export default function Dashboard({ user }) {
                   <div className="absolute flex items-center justify-center" style={{ width: 90, height: 90, left: "50%", top: "50%", marginLeft: -45, marginTop: -45 }}>
                     <div style={{ textAlign: 'center' }}>
                         <p className="text-xs text-gray-500 dark:text-slate-400 mb-1">Suma</p>
-                      <p className="text-lg font-bold" style={{ color: GREEN }}>{formatMoney(total_all_time)}</p>
+                      <p className="text-lg font-bold" style={{ color: GREEN }}>{formatMoney(monthTotal)}</p>
                     </div>
                   </div>
                 </div>
@@ -205,7 +213,7 @@ export default function Dashboard({ user }) {
           })()}
         </Card>
 
-                  {/* Bar Chart */}
+        {/* Bar Chart */}
         <div className="bg-white dark:bg-slate-800 rounded-xl shadow-sm p-5 hover:shadow-md transition-shadow">
           <div className="flex items-center justify-between mb-4">
             <h3 className="text-base font-bold text-gray-800 dark:text-slate-200">Wydatki w czasie</h3>
@@ -257,7 +265,7 @@ export default function Dashboard({ user }) {
         )}
       </Card>
 
-      <ModalDodajWydatek isOpen={modalOpen} onClose={() => setModalOpen(false)} onSubmit={handleAddExpense} activeCategories={activeCategories} />
+      <AddExpenseModal isOpen={modalOpen} onClose={() => setModalOpen(false)} onSubmit={handleAddExpense} activeCategories={activeCategories} />
 
 
       {/* Floating add button */}
@@ -284,19 +292,63 @@ function Card({ title, children }) {
 
 function StatCard({ label, value, icon, color, badge }) {
   return (
-   <div className="bg-white dark:bg-slate-800 rounded-xl shadow-sm hover:shadow-md transition-shadow p-5 relative overflow-hidden">
-      {badge && <span className="absolute top-3 right-4 text-xs font-medium bg-gray-100 dark:bg-slate-700 text-gray-600 dark:text-slate-300 px-2 py-0.5 rounded-full">{badge}</span>}
-      <div className="flex items-center gap-3 mb-3">
-        <div style={{ backgroundColor: color + '20' }} className="w-10 h-10 rounded-lg flex items-center justify-center shrink-0">
+     <div className="bg-white dark:bg-slate-800 rounded-xl shadow-sm hover:shadow-md transition-shadow p-5 relative overflow-hidden">
+       {badge && <span className="absolute top-3 right-4 text-xs font-medium bg-gray-100 dark:bg-slate-700 text-gray-600 dark:text-slate-300 px-2 py-0.5 rounded-full">{badge}</span>}
+       <div className="flex items-center gap-3 mb-3">
+         <div style={{ backgroundColor: color + '20' }} className="w-10 h-10 rounded-lg flex items-center justify-center shrink-0">
+           {icon}
+         </div>
+         <span className="text-sm font-medium text-gray-600 dark:text-slate-400">{label}</span>
+       </div>
+
+       <p className={`text-2xl font-bold`} style={{ color }}>{formatMoney(value)}</p>
+     </div>
+   );
+ }
+
+
+function StatCard2({ label, change, absDiff: propAbsDiff, monthStr: ms, icon, color: arrowColor }) {
+  const [prevLabel, setPrevLabel] = useState('');
+
+  useEffect(() => {
+    if (!ms) return;
+    const [y, m] = ms.split('-').map(Number);
+    let py, pm;
+    if (m === 1) { py = y - 1; pm = 12; } else { py = y; pm = m - 1; }
+    setPrevLabel(`${MONTH_NAMES[pm - 1]} ${py}`);
+ }, [ms]);
+
+  const absDiffRaw = Number(propAbsDiff) || 0;
+  const sign = absDiffRaw >= 0 ? '+' : '';
+
+  return (
+    <div className="bg-white dark:bg-slate-800 rounded-xl shadow-sm hover:shadow-md transition-shadow p-5 relative overflow-hidden">
+      <div className="flex items-center gap-3 mb-1">
+        <div style={{ backgroundColor: arrowColor + '20' }} className="w-10 h-10 rounded-lg flex items-center justify-center shrink-0">
           {icon}
         </div>
         <span className="text-sm font-medium text-gray-600 dark:text-slate-400">{label}</span>
       </div>
 
-      <p className={`text-2xl font-bold`} style={{ color }}>{formatMoney(value)}</p>
-    </div>
+      <p className="text-xs text-gray-500 dark:text-slate-400 mb-2">
+        {ms ? MONTH_NAMES[parseInt(ms.split('-')[1], 10) - 1] : ''} vs {prevLabel || '—'}
+      </p>
+
+      <div className="flex items-baseline gap-3 flex-wrap">
+        <p className={`text-xl font-bold`} style={{ color: arrowColor }}>
+          {change !== null && change > 0 ? `↑ ${Math.abs(change)}%` : (change !== null ? `↓ ${Math.abs(change)}%` : '—')}
+        </p>
+        <p className={`text-lg font-bold`} style={{ color: arrowColor }}>
+          {sign}{formatMoney(absDiffRaw)}
+        </p>
+      </div>
+
+      <p className="text-xs text-gray-400 dark:text-slate-500 mt-1">
+        {change === null && 'Brak danych za poprzedni miesiąc'}
+      </p>
+   </div>
   );
-}
+ }
 
 function CategoryRow({ cat, isDark }) {
   const wydatki = cat.expenditure || 0;
@@ -344,8 +396,8 @@ function CategoryRow({ cat, isDark }) {
 // Reusable icon components for stat cards
 function IconAllTime() { return <svg className="w-5 h-5 text-[#ef4444]" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.8} d="M13 7h8m0 0v8m0-8l-8 8-4-4-6 6" /></svg>; }
 function IconMonth() { return <svg className="w-5 h-5 text-[#3b82f6]" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.8} d="M8 7V3m8 4V3m-9 8h10M5 21h14a2 2 0 000-4H5a2 2 0 000 4z" /></svg>; }
-function IconPlanned() { return <svg className="w-5 h-5 text-[#f59e0b]" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.8} d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z" /></svg>; }
 function IconCurrent() { return <svg className="w-5 h-5 text-[#8b5cf6]" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.8} d="M12 8c-3.866 0-7 1.567-7 3.5V14a2 2 0 002 2h2v-2.5m14 0H9" /></svg>; }
+function IconChange() { return <svg className="w-5 h-5 text-[#f59e0b]" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.8} d="M7 16V4m0 0L3 8m4-4l4 4m6 0v12m0 0l4-4m-4 4l-4-4" /></svg>; }
 
 function formatMoney(v) {
   v = Number(v || 0);
@@ -361,7 +413,7 @@ function CustomTooltip({ active, payload }) {
         return (
           <div key={p.name} style={{ display:'flex', alignItems:'center', gap:'6px', margin:'4px 0' }}>
             <span style={{ width:'10px', height:'10px', borderRadius:'50%', background:p.color, flexShrink:0 }} />
-            <span>{p.name}: {val} zł</span>
+            <span className="text-gray-900 dark:text-slate-100">{p.name}: {val} zł</span>
           </div>
         );
       })}
@@ -375,7 +427,7 @@ function CustomBarTooltip({ active, payload }) {
   const seenNames = new Set();
   return (
      <div className="bg-white dark:bg-slate-800 border dark:border-slate-700 shadow-md p-3 rounded-lg max-w-[240px]">
-      {d.label && <p style={{ fontSize:'13px', fontWeight:700, marginBottom:'6px' }}>{d.label}</p>}
+      {d.label && <p className="text-gray-900 dark:text-white" style={{ fontSize:'13px', fontWeight:700, marginBottom:'6px' }}>{d.label}</p>}
       {payload.map((e) => {
         const val = Number(e.value).toLocaleString('pl-PL', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
         if (seenNames.has(e.name)) return null;
@@ -383,8 +435,8 @@ function CustomBarTooltip({ active, payload }) {
         return (
           <div key={e.name} style={{ display:'flex', alignItems:'center', gap:'6px', margin:'4px 0' }}>
             <span style={{ width:'10px', height:'10px', borderRadius:'50%', background:e.color, flexShrink:0 }} />
-            <span style={{ color:'#6b7280', fontSize:'13px' }}>{e.name}</span>
-            <strong>{val} zł</strong>
+            <span className="text-gray-600 dark:text-slate-400" style={{ fontSize:'13px' }}>{e.name}</span>
+            <strong className="text-gray-900 dark:text-white">{val} zł</strong>
           </div>
         );
       })}

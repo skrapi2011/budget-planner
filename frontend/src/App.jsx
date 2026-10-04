@@ -1,7 +1,8 @@
-import { BrowserRouter, Routes, Route, Navigate } from 'react-router-dom';
-import { lazy, Suspense } from 'react';
+import { BrowserRouter, Routes, Route, Navigate, useNavigate, useLocation } from 'react-router-dom';
+import { lazy, Suspense, useEffect } from 'react';
 import { AuthProvider, useAuth } from './AuthContext';
 import { ThemeProvider } from './ThemeContext';
+import * as api from './api';
 
 const LoginPage = lazy(() => import('./pages/LoginPage'));
 const RegisterPage = lazy(() => import('./pages/RegisterPage'));
@@ -10,6 +11,7 @@ const ExpensesView = lazy(() => import('./pages/ExpensesView'));
 const CategoriesView = lazy(() => import('./pages/CategoriesView'));
 const BudzetyView = lazy(() => import('./pages/Budgets'));
 const TagsView = lazy(() => import('./pages/Tags'));
+const YearOverview = lazy(() => import('./pages/YearOverview'));
 
 function Spinner() {
   return (
@@ -45,6 +47,22 @@ const IndexGate = () => {
 };
 
 function AppRoutes() {
+  const navigate = useNavigate();
+  const location = useLocation();
+  const { clearSession } = useAuth();
+
+  // Global expired-token handler: any authenticated API call that gets a 401
+  // (JWT expired) drops the local session and redirects to /login, where a
+  // small "session expired" toast is shown via location.state.
+  useEffect(() => {
+    api.setSessionExpiredHandler(() => {
+      clearSession();
+      if (location.pathname !== '/login') {
+        navigate('/login', { replace: true, state: { sessionExpired: true } });
+      }
+    });
+  }, [navigate, location.pathname, clearSession]);
+
   return (
     <Suspense fallback={<Spinner />}>
       <Routes>
@@ -94,6 +112,14 @@ function AppRoutes() {
           element={
             <ProtectedRoute>
               <TagsView />
+            </ProtectedRoute>
+          }
+        />
+        <Route
+          path="/year"
+          element={
+            <ProtectedRoute>
+              <YearOverview />
             </ProtectedRoute>
           }
         />

@@ -68,8 +68,8 @@ export default function CategoriesView({ user }) {
   return (
     <Layout username={user}>
       <div className="mb-6">
-        <h2 className="text-xl font-bold text-gray-900 mb-1">Zarządzanie kategoriami</h2>
-        <p className="text-sm text-gray-500">Dodawaj, edytuj i usuwaj swoje kategorie wydatków</p>
+        <h2 className="text-xl font-bold text-gray-900 mb-1 dark:text-slate-100">Zarządzanie kategoriami</h2>
+        <p className="text-sm text-gray-500 dark:text-slate-400">Dodawaj, edytuj i usuwaj swoje kategorie wydatków</p>
       </div>
 
       {loading && (
