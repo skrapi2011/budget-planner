@@ -18,7 +18,7 @@ applications in one monorepo:
 | `frontend/` | React 19, Vite 8, Tailwind CSS 4, recharts 3, react-router-dom 7 | **5173** (dev) | SPA |
 
 Multi-user: every user gets their own categories, budgets and transactions. Auth is
-stateless JWT (HS256, 24 h expiry). There **is** a test suite (255 backend + 342 frontend),
+stateless JWT (HS256, 24 h expiry). There **is** a test suite (314 backend + 347 frontend),
 **a CI pipeline** (`.github/workflows/ci.yml`, gating PRs and pushes to `main`) and
 **`backend/requirements.txt`** — see §8 for how changes are verified.
 
@@ -84,13 +84,23 @@ budget-planner/
 ### Backend (port 3001)
 
 ```bash
-# No requirements.txt — install manually:
-pip install flask pyjwt flask-cors
+# Install the manifest (backend/requirements.txt exists — §9.7):
+pip install -r backend/requirements.txt
 
 # Run from the repo root or backend/ (App.py imports `database` as a top-level module):
 python backend/App.py
-# → http://127.0.0.1:3001  (debug=True, single process — dev only)
+# → http://127.0.0.1:3001  (debug is OFF by default — §9.6; single process, dev only)
 ```
+
+Optional env for `App.py` (all have safe dev defaults, so a fresh clone runs with none of them):
+
+| Var | Effect |
+|---|---|
+| `SECRET_KEY` | JWT signing key. Unset → a 64-char value is generated once and persisted to `backend/data/.jwt_secret` (mode 0600, gitignored) so tokens survive a restart (§9.5). **Set it in any real deployment.** |
+| `ALLOWED_ORIGINS` | comma-separated CORS origins. Default `http://localhost:5173,http://127.0.0.1:5173`. The dev SPA reaches the API through the Vite proxy, i.e. same-origin, so it needs no CORS at all; in production set the deployed frontend's origin. An unknown origin is never echoed. |
+| `LOGIN_LIMIT` / `REGISTER_LIMIT` / `LOGIN_WINDOW_S` | the login/register throttle per `(ip, username)`; `0` disables it (the test suite disables it in `conftest.py`). |
+| `DATABASE_PATH` | redirects the DB file; `conftest.py` sets it **before** importing App, which is what makes the module-level `init_db()` safe (§3). |
+| `FLASK_DEBUG=1` | opt-in dev debugger (§9.6). |
 
 ⚠️ **Importing `App.py` has side effects.** `init_db()` is called at module level (end of
 `App.py`): it creates the DB file, ensures the demo user exists, and seeds data. Do not
@@ -175,6 +185,20 @@ Schema lives in `SCHEMA` in `backend/database.py` (applied idempotently at start
 - **Money:** plain `REAL`, PLN implied, no currency column. Amounts must be > 0 for
   transactions, ≥ 0 for budgets. Round to 2 decimals on the backend.
 - **Category colors:** hex strings (`#e74c3c`); icons: single emoji.
+- ⚠️ **The write boundary is the only place these formats are enforced.** The helpers at the top
+  of `App.py` (`parse_amount`, `as_text`, `normalize_month`, `normalize_active`,
+  `normalize_order`, `normalize_tags`, `normalize_color`) reject everything that does not fit,
+  answer 400 in Polish, and let nothing reach a column un-normalised. Concretely:
+  `month_year` is normalised to `YYYY-MM` on POST `/api/budgets` (it used to be inserted
+  verbatim, so rows keyed `2026-13` / `abc` / `2026-5` existed and no month view could match
+  them); `active` and `default_order` are coerced to 1/0 and int (a string like `"abc"` used to
+  land as TEXT in an INTEGER column, which hid the category from `/api/categories/active`);
+  amounts must be **finite** (`1e999` was stored as Infinity, which Flask emits as the bare
+  word `Infinity` — invalid JSON, so `api.js` threw on `response.json()` and the page died, and
+  NaN hit the CHECK/NOT NULL constraint as an unhandled IntegrityError → 500);
+  `description`/`icon`/`name`/tag names must be strings within their caps (a `dict` reached the
+  DBAPI → `ProgrammingError` → 500). `description` and `tags` stay optional (`description?`).
+  If you add a field, extend the boundary — do not validate inside the route body.
 
 ---
 
@@ -268,6 +292,11 @@ Tags & stats:
 - New routes use the conventional codes: `DELETE /api/categories/<id>` and
   `DELETE /api/budgets/<id>` both answer **404**. Do not "fix" the two legacy codes above
   without checking `api.js`.
+- **413** (oversized body) and **429** (login/register throttle) are also JSON: `MAX_CONTENT_LENGTH`
+  is 128 kB with a Polish 413 handler, and the throttle answers
+  `Zbyt wiele prób. Spróbuj później.` per `(ip, username)`. The knobs are `LOGIN_LIMIT`,
+  `REGISTER_LIMIT`, `LOGIN_WINDOW_S` (0 disables); `conftest.py` disables them because the
+  fixtures create a fresh user per test from one IP.
 - **All validation messages are Polish** (audit P1-46): `api.js` throws `data.error` and pages
   show it via `toastError(err.message)`, so a new message must be written in Polish.
 
@@ -415,7 +444,7 @@ reviews required, stale reviews dismissed. So **a direct `git push` to `main` is
 (also for the owner) and a PR merges only when the check is green — work goes through a
 `feature/*` branch + PR (§11).
 
-The suite (added after the second audit round): **255 backend + 342 frontend tests, all
+The suite (added after the second audit round): **314 backend + 347 frontend tests, all
 green.** A green run is the pre-existing state — if a change breaks one, fix the code, not the
 assertion.
 
@@ -497,10 +526,15 @@ For changes the suite does not cover, verify manually in this order:
    implementation is `_budgets_view()` behind `POST /api/budgets/by-month-post`. Also removed
    as caller-less: `GET /api/transactions/recent` and `POST /api/stats/month-summary`.
    `GET /api/categories/active` and `GET /api/auth/status` now have callers.
-5. **Weak default JWT secret:**
-   `SECRET_KEY = os.environ.get("SECRET_KEY", "planowanie-wydatkow-jwt")`. Must be set in
-   any real deployment; tokens minted under different secrets won't validate against each
-   other.
+5. ~~**Weak default JWT secret**~~ **fixed**: the fallback was the literal
+   `"planowanie-wydatkow-jwt"` — a value every clone of the repo knows, and 23 bytes, which
+   PyJWT flags (`InsecureKeyLengthWarning`, RFC 7518 wants ≥ 32 for HS256). It was
+   exploitable: `pyjwt.encode({"user_id": 1, "username": "admin"}, "planowanie-wydatkow-jwt",
+   "HS256")` was accepted and `GET /api/auth/status` answered 200 as admin. The secret now
+   comes from `SECRET_KEY`, or from a generated 64-char value persisted to
+   `backend/data/.jwt_secret` (mode 0600, gitignored) so tokens survive a restart — a
+   random-per-process secret would bounce the SPA to /login on every boot. `conftest.py` sets
+   `SECRET_KEY` before importing App (same reason as `DATABASE_PATH`).
 6. ~~`app.run(debug=True)`~~ **fixed**: debug is off by default; set `FLASK_DEBUG=1` to enable
    it for dev. Unhandled exceptions return JSON `{"error":"Internal server error"}` (500).
 7. ~~**No backend dependency manifest.**~~ **fixed**: `backend/requirements.txt` lists
@@ -511,11 +545,10 @@ For changes the suite does not cover, verify manually in this order:
    don't remove either without confirming.
 9. **`README.md` is one line.** This file (AGENTS.md) is the de-facto documentation —
    keep it updated when contracts change.
-10. **Nested `<button>` in `Tags.jsx`** — the tag row is a `<button>` that contains the
-    rename/delete buttons. React warns `In HTML, <button> cannot be a descendant of <button>`
-    and the nesting is invalid HTML (breaks hydration / a11y). Restructure the row (e.g. a
-    `<div>` with the label as a button) when touching that page. **Still open** — the page was
-    rewritten in the tags work (P0-22/23) and the nesting survived.
+10. ~~**Nested `<button>` in `Tags.jsx`**~~ **fixed** (P1-52): the row is a `<div>`, the label
+    is its own `<button>` and rename/delete are siblings, so the invalid button-in-button
+    nesting and the React warning are gone. The "**Still open**" claim here was stale — the
+    page was restructured in the P1-52 pass.
 11. **Lint baseline is clean for `src/`.** `npx eslint src/` reports 0 problems (the
     react-hooks `set-state-in-effect`, `exhaustive-deps`, `no-empty`, `no-extra-boolean-cast`
     and dead-variable findings from the audit pass were cleared, and `no-empty` is configured
