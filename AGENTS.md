@@ -18,9 +18,9 @@ applications in one monorepo:
 | `frontend/` | React 19, Vite 8, Tailwind CSS 4, recharts 3, react-router-dom 7 | **5173** (dev) | SPA |
 
 Multi-user: every user gets their own categories, budgets and transactions. Auth is
-stateless JWT (HS256, 24 h expiry). There is **no test suite, no CI, and no backend
-dependency manifest** (`requirements.txt` does not exist) — see §8 for how changes are
-verified instead.
+stateless JWT (HS256, 24 h expiry). There **is** a test suite (255 backend + 342 frontend),
+**a CI pipeline** (`.github/workflows/ci.yml`, gating PRs and pushes to `main`) and
+**`backend/requirements.txt`** — see §8 for how changes are verified.
 
 ---
 
@@ -30,6 +30,10 @@ verified instead.
 budget-planner/
 ├── AGENTS.md                  ← you are here
 ├── README.md                  ← one line only; this file is the real doc
+├── pytest.ini                 ← testpaths = backend/tests, -q --disable-warnings
+├── dev.sh                     ← starts backend + frontend in one shot
+├── AUDIT.md / todo.md         ← the audit report + the deferred items
+├── .github/workflows/ci.yml   ← the CI pipeline (§8): backend, frontend, the "CI summary" gate
 ├── backend/
 │   ├── App.py                 ← ALL Flask routes + seeding logic (~1300 lines). Entry point.
 │   ├── database.py            ← SQLite schema (SCHEMA list) + get_connection() factory
@@ -397,9 +401,23 @@ Route paths are **Polish and part of the contract** — don't rename them withou
 
 ## 8. Verification workflow
 
-There is **no CI**, but there **is a test suite** (added after the second audit round):
-**255 backend + 342 frontend tests, all green.** A green run is the pre-existing state — if a
-change breaks one, fix the code, not the assertion.
+There **is a CI pipeline** (`.github/workflows/ci.yml`): two jobs behind one required check,
+**`CI summary`** (the check name is the job name — `CI summary`, not `CI / summary`).
+
+- **backend** — `setup-python` 3.14, `pip install -r backend/requirements.txt`, `pytest backend/tests`.
+- **frontend** — Node 22, `npm ci`, `eslint .`, `npm test -- --retry=1`, `npm run build`, uploads `frontend/dist` as an artefact.
+- **summary** — `needs: [backend, frontend]` + `if: always()`, so the aggregate check always reports; it is the name to require in branch protection.
+- Fires on `pull_request` and `push` to `main`, plus `workflow_dispatch`. `permissions: contents: read`, `concurrency.cancel-in-progress`, job timeouts 10/15 min.
+
+`main` **is protected**: required status check `CI summary` (strict — the PR must be current
+with `main`), `enforce_admins` is **on**, force-push and branch deletion are off, 0 approving
+reviews required, stale reviews dismissed. So **a direct `git push` to `main` is blocked**
+(also for the owner) and a PR merges only when the check is green — work goes through a
+`feature/*` branch + PR (§11).
+
+The suite (added after the second audit round): **255 backend + 342 frontend tests, all
+green.** A green run is the pre-existing state — if a change breaks one, fix the code, not the
+assertion.
 
 ```bash
 python -m pytest backend/tests            # backend: Flask test client + isolated temp DB
@@ -554,7 +572,9 @@ Stop backend → `rm backend/data/baza.db` → restart. Admin/admin123 + 10 cate
 - **Conventional commits**, as seen in history: `feat: …`, `fix: …`, `hotfix`, plus
   occasional bare messages. Keep it that way (`feat: add yearly tab`).
 - Work on `feature/*` branches, merge to `main` via PR (history shows
-  `feature/darkmode`, `feature/ui-tweaks`).
+  `feature/darkmode`, `feature/ui-tweaks`). ⚠️ `main` is protected with
+  **`enforce_admins: true`**, so `git push origin main` is rejected even for the owner: the
+  required check `CI summary` must be green and the branch must be current with `main` (§8).
 - Never commit: `backend/data/*.db`, `frontend/node_modules/`, `frontend/dist/`,
   `frontend/dist_probe/`, `__pycache__/` — all gitignored. The DB is per-machine state.
 - Check `git status` before starting: the working tree may contain in-flight changes from
