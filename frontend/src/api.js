@@ -1,22 +1,35 @@
 const SERVER_URL = import.meta.env.VITE_API_URL || '';
 const API_BASE = `${SERVER_URL}/api`;
 
+// Registered by the router (App.jsx): called when an authenticated request
+// comes back 401, i.e. the JWT expired. Redirects to /login with a toast.
+let sessionExpiredHandler = null;
+export function setSessionExpiredHandler(fn) {
+  sessionExpiredHandler = fn;
+}
+
 async function _fetch(url, options) {
   const fullUrl = url.startsWith('http') ? url : `${API_BASE}${url}`;
-  try {
-    const response = await fetch(fullUrl, options);
-    if (response.status === 401) {
-      throw new Error('Unauthorized');
+  const response = await fetch(fullUrl, options);
+  if (response.status === 401) {
+    // Only treat as expired session when we actually sent a token.
+    // Login/register send no auth header — their 401 means bad credentials.
+    const hadAuth = Boolean(options?.headers?.Authorization);
+    if (hadAuth) {
+      localStorage.removeItem('token');
+      localStorage.removeItem('user');
+      try {
+        sessionExpiredHandler?.();
+      } catch { /* handler errors are non-fatal */ }
     }
-    const data = await response.json();
-    if (!response.ok) {
-      const message = data?.error || 'An error occurred';
-      throw new Error(message);
-    }
-    return data;
-  } catch (error) {
-    throw error;
+    throw new Error('Unauthorized');
   }
+  const data = await response.json();
+  if (!response.ok) {
+    const message = data?.error || 'An error occurred';
+    throw new Error(message);
+  }
+  return data;
 }
 
 function getHeaders(includeAuth = true) {
@@ -40,9 +53,11 @@ export async function login(username, password) {
 }
 
 export async function logout() {
+  // Backend logout is a stateless no-op (no @require_auth), so we skip the
+  // auth header — an expired token here must NOT trigger the session-expired toast.
   const token = localStorage.getItem('token');
   if (token) {
-    try { await _fetch('/auth/logout', { method: 'DELETE', headers: getHeaders(true) }); } catch {}
+    try { await _fetch('/auth/logout', { method: 'DELETE', headers: getHeaders(false) }); } catch {}
   }
   localStorage.removeItem('token');
   localStorage.removeItem('user');
@@ -59,10 +74,6 @@ export async function register(username, password, confirmPassword) {
   return data;
 }
 
-export async function checkStatus() {
-  return _fetch('/auth/status', { method: 'GET', headers: getHeaders(true) });
-}
-
 // ---- CATEGORIES ----
 
 export async function getCategories(active) {
@@ -77,24 +88,11 @@ export async function createCategory(data) {
 }
 
 export async function updateCategory(id, data) {
-  try {
-    await _fetch(`/categories/${id}`, { method: 'PUT', headers: getHeaders(true), body: JSON.stringify(data) });
-  } catch (err) {
-    if ((err.message || '').includes('Foreign key') || (err.message || '').includes('integrity')) {
-      await _fetch(`/categories/${id}`, { method: 'PUT', headers: getHeaders(true), body: JSON.stringify(data) });
-    } else throw err;
-  }
+  return _fetch(`/categories/${id}`, { method: 'PUT', headers: getHeaders(true), body: JSON.stringify(data) });
 }
 
 export async function deleteCategory(id) {
-  return _fetch(`/categories/${id}`, { method: 'DELETE', headers: getHeaders(true) }).catch(async () => {
-    try { await _fetch(`/transactions`, { method: 'GET', headers: getHeaders(true) }); } catch {}
-    return _deleteCategory(id);
-  });
-}
-
-async function _deleteCategory(id) {
-  try { await _fetch(`/categories/${id}`, { method: 'DELETE', headers: getHeaders(true) }); } catch {}
+  return _fetch(`/categories/${id}`, { method: 'DELETE', headers: getHeaders(true) });
 }
 
 // ---- BUDGETS ----
@@ -135,23 +133,9 @@ export async function deleteTransaction(id) {
   return _fetch(`/transactions/${id}`, { method: 'DELETE', headers: getHeaders(true) });
 }
 
-// Fetches all transactions (optionally filtered by month/year), NOT restricted to current user - requires auth token.
-export async function getTransactionsAll(month, year) {
-  const params = new URLSearchParams();
-  if (month && year) {
-    if (String(month).includes('-')) {
-      params.set('month', month);
-    } else {
-      const yr = String(year ?? '').padEnd(4, '0');
-      const mo = String(month || new Date().getMonth() + 1).padStart(2, '0');
-      params.set('month', `${yr}-${mo}`);
-    }
-  } else if (typeof month === 'string' && !isNaN(Number(month))) {
-    const yrs = year ? String(year) : new Date().getFullYear();
-    params.set('month', `${yrs}-${String(month).padStart(2,'0')}`);
-  }
-  const qs = params.toString() ? `?${params.toString()}` : '';
-  return _fetch(`/transactions${qs}`, { method: 'GET', headers: getHeaders(true) });
+// Fetches all transactions of the current user (backend filters by user_id).
+export async function getTransactionsAll() {
+  return _fetch('/transactions', { method: 'GET', headers: getHeaders(true) });
 }
 
 // ---- TAGS ----
@@ -161,14 +145,6 @@ export async function getAllTags() {
 }
 
 // Tag-manipulation helpers used by Tags.jsx
-export async function updateTransactionTags(txId, tagsArray) {
-  try {
-    await _fetch(`/transactions/${txId}`, { method: 'PUT', headers: getHeaders(true), body: JSON.stringify({ tags: tagsArray }) });
-  } catch (err) {
-    throw new Error(err.message || `Failed to update tags for transaction ${txId}`);
-  }
-}
-
 export async function deleteTag(tagToRemove) {
   try {
     const txns = await _fetch('/transactions', { method: 'GET', headers: getHeaders(true) });
@@ -198,31 +174,9 @@ export async function updateTagName(editId, newName) {
 
 // ---- STATS/BUDGETS VIEW HELPERS ----
 
-export async function getBudgetsByMonth(month, year) {
-  const yr = String(year).padEnd(4, '0');
-  const mo = String(month || new Date().getMonth() + 1).padStart(2, '0');
-  return _fetch(`/budgets?month=${yr}-${mo}`, { method: 'GET', headers: getHeaders(true) });
-}
-
-export async function getStatsSummary(month, year) {
-  const params = new URLSearchParams();
-  if (typeof month === 'string' && !isNaN(Number(month)) && typeof year === 'number') {
-    params.set('month', `${String(year).padEnd(4,'0')}-${String(month).padStart(2,'0')}`);
-  } else {
-    const yr = String(year).padEnd(4, '0');
-    const mo = isNaN(Number(month)) ? month.split('-')[1] : String(month).padStart(2,'0');
-    params.set('month', `${yr}-${mo}`);
-  }
-  return _fetch('/stats/month-summary', { method: 'POST', headers: getHeaders(true), body: JSON.stringify({ month: params.get('month') }) });
-}
-
 export async function getDashboardData(month) {
   const m = month || `${new Date().getFullYear()}-${String(new Date().getMonth()+1).padStart(2,'0')}`;
   return _fetch('/stats/dashboard-data', { method: 'POST', headers: getHeaders(true), body: JSON.stringify({ month: m }) });
-}
-
-export async function getRecentTransactions(limit) {
-  return _fetch(`/transactions/recent?limit=${limit}`, { method: 'GET', headers: getHeaders(true) });
 }
 
 /* ===========================================
@@ -231,4 +185,9 @@ export async function getRecentTransactions(limit) {
    =========================================== */
 export async function getBudgetsViewByMonth(monthStr) {
   return _fetch('/budgets/by-month-post', { method: 'POST', headers: getHeaders(true), body: JSON.stringify({ month: monthStr }) });
+}
+
+export async function getYearSummary(year) {
+  const yr = year || `${new Date().getFullYear()}`;
+  return _fetch('/stats/year-summary', { method: 'POST', headers: getHeaders(true), body: JSON.stringify({ year: yr }) });
 }

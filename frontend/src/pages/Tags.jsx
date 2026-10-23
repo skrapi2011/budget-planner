@@ -6,7 +6,6 @@ export default function Tags({ user }) {
   const [transactions, setTransactions] = useState([]);
   const [tags, setTags] = useState([]);
   const [selectedTag, setSelectedTag] = useState(null);
-  const [newTagInput, setNewTagInput] = useState('');
   const [editId, setEditId] = useState(null);
   const [editingName, setEditingName] = useState('');
   const [loading, setLoading] = useState(true);
@@ -60,16 +59,6 @@ export default function Tags({ user }) {
     });
   };
 
-  const handleAddTagToTransaction = async (txId, tagText) => {
-    if (!tagText.trim()) return;
-    try {
-      await api.updateTransactionTags(txId, [...(transactions.find(t => t.id === txId)?.tags || []), tagText.trim()]);
-      loadAll();
-    } catch (err) {
-      alert(err.message);
-    }
-  };
-
   const removeTag = async (tagToRemove) => {
     if (!confirm('Remove this tag from all transactions?')) return;
     try {
@@ -94,8 +83,8 @@ export default function Tags({ user }) {
   return (
     <Layout username={user}>
       <div className="mb-6">
-        <h2 className="text-xl font-bold text-gray-900 mb-1">Tag Management</h2>
-        <p className="text-sm text-gray-500">Manage and filter transactions by tags</p>
+        <h2 className="text-xl font-bold text-gray-900 mb-1 dark:text-slate-100">Tag Management</h2>
+        <p className="text-sm text-gray-500 dark:text-slate-400">Manage and filter transactions by tags</p>
       </div>
 
       {loading ? (
@@ -104,12 +93,6 @@ export default function Tags({ user }) {
         </div>
       ) : (
         <>
-          {/* New tag input */}
-          <div className="mb-6">
-            <h3 className="text-sm font-semibold text-gray-700 mb-2">Quick Add Tag</h3>
-            <p className="text-xs text-gray-500 mb-2">Add a tag to any transaction on the right side. Tags are collected from all transactions.</p>
-          </div>
-
           {tags.length === 0 ? (
             <p className="text-center text-gray-500 py-8 bg-white rounded-lg shadow-sm">No tags found. Add tags via the tag input on individual transactions.</p>
           ) : (

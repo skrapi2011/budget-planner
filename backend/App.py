@@ -501,7 +501,7 @@ def budgets_by_month():
                     COALESCE(b.amount_monthly, 0) AS budzet
             FROM Categories c
             LEFT JOIN Budgets b ON b.category_id=c.id AND b.month_year=? AND b.user_id=?
-            WHERE c.user_id=?""",
+            WHERE c.user_id=? AND COALESCE(c.active,1)=1""",
             (month, g.current_user_id, g.current_user_id),
         ).fetchall()
 
@@ -563,7 +563,7 @@ def budgets_by_month_post():
                     COALESCE(b.amount_monthly, 0) AS budzet
             FROM Categories c
             LEFT JOIN Budgets b ON b.category_id=c.id AND b.month_year=? AND b.user_id=?
-            WHERE c.user_id=?""",
+            WHERE c.user_id=? AND COALESCE(c.active,1)=1""",
             (month, g.current_user_id, g.current_user_id),
         ).fetchall()
 
@@ -1061,21 +1061,18 @@ def dashboard_data():
 
     conn = get_connection()
     try:
-        # Total wydatki all time
         total_row = conn.execute(
             "SELECT SUM(amount) AS t FROM Transactions WHERE user_id=? AND type='wydatek'",
             (g.current_user_id,),
         ).fetchone()
         total_spending_all_time = round(float(total_row["t"]) if total_row["t"] else 0, 2)
 
-        # Wydatki w tym miesiącu
         month_rows = conn.execute(
             "SELECT SUM(amount) AS t FROM Transactions WHERE user_id=? AND type='wydatek' AND date>=? AND date<?",
             (g.current_user_id, current_month_start, next_month_start),
         ).fetchone()
         month_spending = round(float(month_rows["t"]) if month_rows["t"] else 0, 2)
 
-        # Planowane wydatki (aktywne budżety + bieżący miesiąc przyszłych lub aktualny)
         planned_row_all_time = conn.execute(
             """SELECT COALESCE(SUM(amount_monthly), 0) AS t FROM Budgets 
                WHERE user_id=? AND amount_monthly > 0""",
@@ -1083,11 +1080,30 @@ def dashboard_data():
         ).fetchone()
         planned_total_all_time = round(float(planned_row_all_time["t"]) if planned_row_all_time["t"] else 0, 2)
 
-        # Current month planned budgets only
+        # Previous month spending for comparison
+        prev_first_month = int(mon_s) == 1
+        if prev_first_month:
+            prev_year_val = int(year_s) - 1
+            prev_mon_val = 12
+        else:
+            prev_year_val = int(year_s)
+            prev_mon_val = int(mon_s) - 1
+        
+        prev_month_start = f"{prev_year_val}-{str(prev_mon_val).zfill(2)}-01"
+        nxt_prev_dt = datetime(prev_year_val, prev_mon_val, 1) + timedelta(days=32)
+        prev_next_month = f"{nxt_prev_dt.year}-{str(nxt_prev_dt.month).zfill(2)}-01"
+
+        prev_row = conn.execute(
+            "SELECT SUM(amount) AS t FROM Transactions WHERE user_id=? AND type='wydatek' AND date>=? AND date<?",
+            (g.current_user_id, prev_month_start, prev_next_month),
+        ).fetchone()
+        prev_month_spending = round(float(prev_row["t"]) if prev_row and prev_row["t"] else 0, 2)
+
+      # Current month planned budgets only
         current_planned_row = conn.execute(
             """SELECT COALESCE(SUM(amount_monthly), 0) AS t FROM Budgets 
                WHERE user_id=? AND amount_monthly > 0 AND month_year=?""",
-            (g.current_user_id, f"{now.year}-{str(now.month).zfill(2)}"),
+            (g.current_user_id, f"{year_s}-{mon_s}"),
         ).fetchone()
         current_planned = round(float(current_planned_row["t"]) if current_planned_row["t"] else 0, 2)
 
@@ -1141,12 +1157,165 @@ def dashboard_data():
             })
 
         return jsonify({
-            "total_all_time": total_spending_all_time,
-            "month_total": month_spending,
-            "planned_all_time": planned_total_all_time,
-            "current_planned": current_planned,
-            "chart_data": chart_data,
-            "monthly_history": months_history,
+                "total_all_time": total_spending_all_time,
+                "month_total": month_spending,
+                "prev_month_total": prev_month_spending,
+                "planned_all_time": planned_total_all_time,
+                "current_planned": current_planned,
+                "chart_data": chart_data,
+                "monthly_history": months_history,
+            }), 200
+    finally:
+        conn.close()
+
+
+
+@app.route("/api/stats/year-summary", methods=["POST"])
+@require_auth
+def year_summary():
+    data = request.get_json(silent=True) or {}
+    year_str = (data.get("year") or "").strip()
+    if not year_str or not str(year_str).isdigit():
+        return jsonify({"error": "Year parameter required"}), 400
+
+    conn = get_connection()
+    try:
+        start_year = int(year_str)
+        next_year_start_date = f"{start_year + 1}-01-01"
+
+        # Total spending for year
+        total_row = conn.execute(
+            "SELECT SUM(amount) AS t FROM Transactions WHERE user_id=? AND type='wydatek' AND date>=? AND date<?",
+            (g.current_user_id, f"{start_year}-01-01", next_year_start_date),
+        ).fetchone()
+        total_spending = round(float(total_row["t"]) if total_row and total_row["t"] else 0, 2)
+
+        # Total budget for year
+        budget_total_row = conn.execute(
+            "SELECT COALESCE(SUM(amount_monthly), 0) AS t FROM Budgets WHERE user_id=? AND month_year>=? AND month_year<?",
+            (g.current_user_id, f"{start_year}-01", f"{start_year + 1}-01"),
+        ).fetchone()
+        total_budgeted = round(float(budget_total_row["t"]) if budget_total_row and budget_total_row["t"] else 0, 2)
+
+        variance = round(total_budgeted - total_spending, 2)
+
+        # Average monthly spending (by months with data)
+        avg_rows = conn.execute(
+            """SELECT SUM(amount) AS total_spend, COUNT(DISTINCT strftime('%Y-%m', date)) AS months_count
+               FROM Transactions WHERE user_id=? AND type='wydatek' AND date>=? AND date<?""",
+            (g.current_user_id, f"{start_year}-01-01", next_year_start_date),
+        ).fetchone()
+
+        total_spend_for_avg = float(avg_rows["total_spend"]) if avg_rows and avg_rows["total_spend"] else 0
+        months_count = int(avg_rows["months_count"]) if avg_rows and avg_rows["months_count"] else 12
+        avg_monthly_spending = round(total_spend_for_avg / max(months_count, 1), 2)
+        avg_monthly_budgeted = round(total_budgeted / 12, 2) if total_budgeted > 0 else 0
+
+        spend_rate = None
+        if total_budgeted > 0:
+            spend_rate = round((total_spending / total_budgeted) * 100, 1)
+
+        # Monthly breakdown with budget and spending per month
+        monthly_summary_raw = conn.execute(
+            """SELECT b.month_year, SUM(b.amount_monthly) AS budg
+               FROM Budgets b 
+               WHERE b.user_id=? AND LENGTH(b.month_year)=7 AND b.month_year>=? AND b.month_year<?
+               GROUP BY b.month_year""",
+            (g.current_user_id, f"{start_year}-01", f"{start_year + 1}-01"),
+        ).fetchall()
+
+        budget_map = {}
+        for br in monthly_summary_raw:
+            val = float(br["budg"]) if br["budg"] else 0.0
+            mk = br["month_year"][:7]
+            budget_map[mk] = val
+
+        month_names_pl = [
+            "Styczeń", "Luty", "Marzec", "Kwiecień", "Maj", "Czerwiec",
+            "Lipiec", "Sierpień", "Wrzesień", "Październik", "Listopad", "Grudzień"
+        ]
+
+        now = datetime.now()
+        
+        monthly_summary = []
+        for m in range(1, 13):
+            month_key = f"{start_year}-{str(m).zfill(2)}"
+            
+            if start_year == now.year and m > now.month:
+                break
+                
+            mon_budgeted = budget_map.get(month_key, 0)
+
+            first_d = f"{month_key}-01"
+            nxt_m_dt = datetime(start_year, m, 1) + timedelta(days=32)
+            next_d_final = f"{nxt_m_dt.year}-{str(nxt_m_dt.month).zfill(2)}-01"
+
+            srow = conn.execute(
+                "SELECT SUM(amount) AS t FROM Transactions WHERE user_id=? AND type='wydatek' AND date>=? AND date<?",
+                (g.current_user_id, first_d, next_d_final),
+            ).fetchone()
+
+            actual = round(float(srow["t"]) if srow and srow["t"] else 0, 2)
+            monthly_summary.append({
+                "month": m,
+                "label": month_names_pl[m - 1],
+                "spending": actual,
+                "budget": mon_budgeted,
+                "balance": round(mon_budgeted - actual, 2),
+                "on_budget": False if (mon_budgeted == 0 and actual > 0) else (True if (mon_budgeted == 0) else (actual <= mon_budgeted)),
+            })
+
+      # Category variance for the year (top deviation per active category)
+        cat_rows = conn.execute(
+            """SELECT c.id AS cid, c.name, c.color, 
+                  COALESCE(SUM(t.amount), 0) AS total_spend
+               FROM Categories c
+               LEFT JOIN Transactions t ON t.category_id=c.id AND t.user_id=? AND t.type='wydatek' AND t.date>=? AND t.date<?
+               WHERE c.active=1
+               GROUP BY c.id""",
+            (g.current_user_id, f"{start_year}-01-01", next_year_start_date),
+        ).fetchall()
+
+        cr_budget_rows = conn.execute(
+            """SELECT category_id AS cid, SUM(amount_monthly) AS total_budg
+               FROM Budgets 
+               WHERE user_id=? AND month_year>=? AND month_year<?
+               GROUP BY category_id""",
+            (g.current_user_id, f"{start_year}-01", f"{start_year + 1}-01"),
+        ).fetchall()
+
+        budget_map_cat = {}
+        for brb in cr_budget_rows:
+            budget_map_cat[int(brb["cid"])] = float(brb["total_budg"]) if brb["total_budg"] else 0.0
+
+        cat_variance = []
+        for cr in cat_rows:
+            cid = int(cr["cid"])
+            spend_val = round(float(cr["total_spend"]) if cr["total_spend"] else 0, 2)
+            bval = budget_map_cat.get(cid, 0.0)
+            var_val = round(bval - spend_val, 2)
+
+            cat_variance.append({
+                "name": cr["name"],
+                "color": cr["color"] or "#94a3b8",
+                "cid": cid,
+                "spending": abs(spend_val),
+                "budgeted": round(bval, 2),
+                "variance": var_val,
+            })
+
+        cat_variance.sort(key=lambda x: abs(x["variance"]), reverse=True)
+
+        return jsonify({
+            "year": start_year,
+            "total_spending": total_spending,
+            "total_budgeted": total_budgeted,
+            "variance": variance,
+            "avg_monthly_spending": avg_monthly_spending,
+            "avg_monthly_budgeted": avg_monthly_budgeted,
+            "spend_rate": spend_rate,
+            "monthly_summary": monthly_summary,
+            "category_variance": cat_variance,
         }), 200
     finally:
         conn.close()
