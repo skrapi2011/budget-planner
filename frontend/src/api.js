@@ -26,7 +26,7 @@ async function _fetch(url, options) {
   }
   const data = await response.json();
   if (!response.ok) {
-    const message = data?.error || 'An error occurred';
+    const message = data?.error || 'Coś poszło nie tak — sprawdź połączenie z serwerem';
     throw new Error(message);
   }
   return data;
@@ -134,6 +134,12 @@ export async function deleteBudget(id) {
 
 // ---- TRANSACTIONS ----
 
+// Tags arrive either as an array (the modal) or as comma-separated text (legacy callers).
+// The column is a JSON array string, so normalise in one place.
+function normalizeTags(raw) {
+  return Array.isArray(raw) ? raw : (raw ? String(raw).split(',').map((t) => t.trim()).filter(Boolean) : []);
+}
+
 export async function addTransaction(data) {
   return _fetch('/transactions', { 
     method: 'POST', 
@@ -146,7 +152,9 @@ export async function addTransaction(data) {
       description: data.description || '', 
       // tags was dropped here, so the whole tags backend (json_each, /tags/all,
       // PUT tags) was unreachable from the UI (audit P0-22).
-      tags: Array.isArray(data.tags) ? data.tags : (data.tags ? String(data.tags).split(',').map((t) => t.trim()).filter(Boolean) : []) 
+      // tags was dropped here, so the whole tags backend (json_each, /tags/all,
+      // PUT tags) was unreachable from the UI (audit P0-22).
+      tags: normalizeTags(data.tags) 
     }) 
   });
 }
@@ -157,17 +165,22 @@ export async function deleteTransaction(id) {
 
 export async function updateTransaction(id, data) {
   // PUT /api/transactions/<id> existed with no caller (audit P0-26).
+  // The route is a PARTIAL update, so send only the keys the caller provided. Building the
+  // full payload here meant a partial call sent `category_id: Number(undefined)` = NaN, which
+  // JSON.stringify turns into null, int(null) raises, and the backend answered 400 — i.e. a
+  // partial edit could not work. A key the caller did not pass is left untouched on the server.
+  const body = {};
+  const cat = data.category_id ?? data.categoryId;
+  if (cat !== undefined) body.category_id = Number(cat);
+  if (data.date !== undefined) body.date = data.date;
+  if (data.amount !== undefined) body.amount = parseFloat(data.amount);
+  if (data.type !== undefined) body.type = data.type;
+  if (data.description !== undefined) body.description = data.description;
+  if (data.tags !== undefined) body.tags = normalizeTags(data.tags);
   return _fetch(`/transactions/${id}`, {
     method: 'PUT',
     headers: getHeaders(true),
-    body: JSON.stringify({
-      category_id: Number(data.categoryId || data.category_id),
-      date: data.date,
-      amount: parseFloat(data.amount),
-      type: data.type || 'wydatek',
-      description: data.description || '',
-      tags: Array.isArray(data.tags) ? data.tags : (data.tags ? String(data.tags).split(',').map((t) => t.trim()).filter(Boolean) : []),
-    }),
+    body: JSON.stringify(body),
   });
 }
 

@@ -111,7 +111,9 @@ describe('401 session expiry', () => {
 
   it('has a generic fallback when the error body has no message', async () => {
     fetch.mockImplementation(async (u, o) => { calls.push([u, o]); return respond({}, 500); });
-    await expect(api.getCategories()).rejects.toThrow('An error occurred');
+    // Polish: the backend messages are Polish (AGENTS.md §6.3) and pages toast err.message
+    // verbatim, so the fallback must not be an English string in a Polish UI.
+    await expect(api.getCategories()).rejects.toThrow('Coś poszło nie tak — sprawdź połączenie z serwerem');
   });
 
   it('returns the parsed body on success', async () => {
@@ -268,7 +270,10 @@ describe('transactions', () => {
   it('updateTransaction is a PUT with the same normalisation (audit P0-26)', async () => {
     await api.updateTransaction(9, { categoryId: 12, date: '2026-05-15', amount: 20, tags: ['x'] });
     expect([url(), opts().method]).toEqual(['/api/transactions/9', 'PUT']);
-    expect(body()).toEqual({ category_id: 12, date: '2026-05-15', amount: 20, type: 'wydatek', description: '', tags: ['x'] });
+    // A partial PUT sends only what the caller passed. The old implementation built the full
+    // payload, so a call that omitted category_id sent Number(undefined) = NaN → JSON null →
+    // backend 400, and it invented type/description defaults the caller never asked for.
+    expect(body()).toEqual({ category_id: 12, date: '2026-05-15', amount: 20, tags: ['x'] });
   });
 
   it('deleteTransaction is a DELETE', async () => {
@@ -365,5 +370,50 @@ describe('no second fetch layer', () => {
     await api.getTransactionsAll();
     expect(url().startsWith('/api/')).toBe(true);
     expect(calls.every(([u]) => u.startsWith('/api/'))).toBe(true);
+  });
+});
+
+describe('partial PUT and the error message language', () => {
+  it('updateTransaction sends only the keys the caller passed', async () => {
+    // The backend PUT is a partial update. The old implementation built the full payload, so a
+    // partial call sent category_id: Number(undefined) = NaN → JSON null → backend 400.
+    await api.updateTransaction(7, { amount: 12.5 });
+    const sent = body();
+    expect(sent).toEqual({ amount: 12.5 });
+    expect('category_id' in sent).toBe(false);
+    expect('date' in sent).toBe(false);
+    expect(sent.amount).not.toBeNaN();
+  });
+
+  it('a full edit still sends every field', async () => {
+    await api.updateTransaction(7, {
+      category_id: 3, date: '2026-06-01', amount: 10, type: 'Przychod', description: 'x', tags: ['a'],
+    });
+    expect(body()).toEqual({
+      category_id: 3, date: '2026-06-01', amount: 10, type: 'Przychod', description: 'x', tags: ['a'],
+    });
+  });
+
+  it('camelCase categoryId is accepted alongside snake_case', async () => {
+    await api.updateTransaction(7, { categoryId: 5 });
+    expect(body()).toEqual({ category_id: 5 });
+  });
+
+  it('the fallback error message is Polish, not English', async () => {
+    // The backend answers Polish (AGENTS.md §6.3) and pages toast err.message verbatim, so a
+    // body without data.error must not surface an English string in a Polish UI.
+    vi.spyOn(globalThis, 'fetch').mockImplementation(async (u, o) => {
+      calls.push([u, o]);
+      return respond({}, 400);
+    });
+    await expect(api.createCategory({ name: 'X' })).rejects.toThrow('Coś poszło nie tak — sprawdź połączenie z serwerem');
+  });
+
+  it('the backend message is surfaced verbatim when there is one', async () => {
+    vi.spyOn(globalThis, 'fetch').mockImplementation(async (u, o) => {
+      calls.push([u, o]);
+      return respond({ error: 'Kwota musi być większa od zera' }, 400);
+    });
+    await expect(api.addTransaction({ category_id: 1, date: '2026-06-01', amount: 0 })).rejects.toThrow('Kwota musi być większa od zera');
   });
 });

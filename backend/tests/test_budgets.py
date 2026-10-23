@@ -279,3 +279,67 @@ class TestMonthDefault:
         user.post("/api/budgets", json={"category_id": cid, "amount_monthly": 300, "month_year": today})
         rows = user.json(user.post("/api/budgets/by-month-post", json={}))
         assert next(r for r in rows if r["cat_id"] == cid)["budzet"] == 300.0
+
+
+class TestWriteBoundary:
+    """Budget writes enforce the "YYYY-MM" contract and reject non-finite amounts.
+
+    Both were accepted with 201: month_year went into the column verbatim, so rows for
+    "2026-13" / "abc" / "2026-5" existed that no month view can ever match (dead data), and
+    1e999 was stored as Infinity — which Flask emits as the bare word `Infinity`, i.e. NOT
+    valid JSON, so api.js threw on response.json() and the page broke.
+    """
+
+    def test_month_year_is_normalised_to_yyyy_dash_mm(self, user, category_ids):
+        from conftest import db_rows
+        cid = category_ids["Transport"]
+        resp = user.post("/api/budgets", json={"category_id": cid, "amount_monthly": 100, "month_year": "2026-5"})
+        assert resp.status_code == 201
+        stored = db_rows("SELECT month_year FROM Budgets WHERE category_id=? ORDER BY id DESC LIMIT 1", (cid,))[0]["month_year"]
+        assert stored == "2026-05"
+        assert row_for(user, "2026-05", cid)["budzet"] == 100.0
+
+    def test_malformed_month_year_is_400(self, user, category_ids):
+        from conftest import db_rows
+        cid = category_ids["Transport"]
+        for bad in ["2026-13", "abc", "2026-05-15", "2026-00", "99999-01", "0-12"]:
+            resp = user.post("/api/budgets", json={"category_id": cid, "amount_monthly": 100, "month_year": bad})
+            assert resp.status_code == 400, bad
+            assert resp.is_json
+        # Nothing was written for this category, and every stored key for the user is
+        # canonical "YYYY-MM" — the contract §5 promises and the read side relies on.
+        rows = db_rows("SELECT month_year FROM Budgets WHERE category_id=?", (cid,))
+        assert rows == []
+        import re
+        for r in db_rows("SELECT month_year FROM Budgets WHERE user_id=(SELECT id FROM Users WHERE username='admin')"):
+            assert re.fullmatch(r"\d{4}-\d{2}", r["month_year"]), r["month_year"]
+
+    def test_infinite_amount_is_rejected(self, user, category_ids):
+        cid = category_ids["Transport"]
+        for bad in [1e999, float("inf"), float("nan"), "1e999", "nan", True]:
+            resp = user.post("/api/budgets", json={"category_id": cid, "amount_monthly": bad, "month_year": "2031-01"})
+            assert resp.status_code == 400, bad
+        resp = user.post("/api/budgets/by-month-post", json={"month": "2031-01"})
+        assert resp.status_code == 200
+        assert "Infinity" not in resp.data.decode()
+        import json
+        json.loads(resp.data)  # must be strict, parseable JSON
+
+    def test_zero_amount_is_still_allowed(self, user, category_ids):
+        # §5: budgets are ≥ 0, transactions > 0. 0 is a legitimate "no limit".
+        cid = category_ids["Transport"]
+        assert user.post("/api/budgets", json={"category_id": cid, "amount_monthly": 0, "month_year": "2031-02"}).status_code == 201
+
+    def test_polish_decimal_comma_is_accepted(self, user, category_ids):
+        cid = category_ids["Transport"]
+        resp = user.post("/api/budgets", json={"category_id": cid, "amount_monthly": "120,50", "month_year": "2031-03"})
+        assert resp.status_code == 201
+        assert row_for(user, "2031-03", cid)["budzet"] == 120.5
+
+    def test_update_with_infinite_amount_is_400(self, user, category_ids, admin):
+        cid = category_ids["Transport"]
+        user.post("/api/budgets", json={"category_id": cid, "amount_monthly": 100, "month_year": "2031-04"})
+        bid = row_for(user, "2031-04", cid)["id"]
+        resp = user.put(f"/api/budgets/{bid}", json={"amount": 1e999})
+        assert resp.status_code == 400
+        assert row_for(user, "2031-04", cid)["budzet"] == 100.0

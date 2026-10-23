@@ -42,6 +42,9 @@ frontend/dist_probe/
 # Database
 backend/data/baza.db
 backend/data/*.db
+# The generated JWT secret (App.py persists it next to the DB, mode 0600) — machine state, never
+# committed. A # mid-line is part of a gitignore pattern, so the note stays on its own line.
+backend/data/.jwt_secret
 !backend/data/.gitkeep
 
 # pi session artifacts
