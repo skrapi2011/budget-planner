@@ -28,10 +28,16 @@ export function useCountUp(target, duration = 500) {
   useEffect(() => {
     if (!numeric) return undefined;
     let raf;
-    const start = performance.now();
+    // The start time comes from the FIRST rAF timestamp, not from performance.now():
+    // the two clocks do not share a time origin in jsdom (rAF stamps start ~230ms behind
+    // performance.now()), so mixing them makes `t` begin negative and the animation need
+    // 46 frames instead of 31 — which is what made the animation tests time out on
+    // loaded CI runners. One clock for the whole animation: the rAF clock.
+    let start = null;
     const from = fromRef.current;
     if (from === target) return undefined;
     const tick = (now) => {
+      if (start === null) start = now;
       const t = Math.min(1, (now - start) / duration);
       const eased = 1 - Math.pow(1 - t, 3);
       const val = from + (target - from) * eased;
