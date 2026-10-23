@@ -540,9 +540,26 @@ For changes the suite does not cover, verify manually in this order:
 7. ~~**No backend dependency manifest.**~~ **fixed**: `backend/requirements.txt` lists
    `Flask`, `PyJWT`, `flask-cors` (runtime) and `pytest` (tests). werkzeug ships with Flask.
    `pip install -r backend/requirements.txt` reproduces the environment.
-8. **Deploy config is contradictory:** `package.json` has a `deploy: gh-pages -d dist`
-   script *and* there's a `vercel.json` SPA rewrite. Vercel appears to be the live target;
-   don't remove either without confirming.
+8. **Deploy config is contradictory, and the deployed app cannot load data.** `package.json`
+   has a `deploy: gh-pages -d dist` script *and* there's a `vercel.json` SPA rewrite. Vercel is
+   the live target — measured: `budget-planner-skr4p.vercel.app` answers `/`, `/budzety`,
+   `/year` and `/wydatki` all **200**, so the catch-all rewrite is applied and the deep links
+   work. Three measured facts about what is live:
+   - `VITE_API_URL` is set nowhere (no `.env*` is committed, and `api.js` defaults `API_BASE` to
+     `''` = same-origin `/api`). Vercel serves the static SPA only, so **there is no backend
+     behind the deployed app**.
+   - The catch-all rewrite swallows `GET /api/*` too: `GET /api/auth/status` on production
+     returned **200 with `text/html`, 331 KB — index.html**. `api.js` calls `response.json()` on
+     HTML → `SyntaxError`, so the user sees the generic Polish toast and the app never loads
+     data. Excluding `^/api/` from the rewrite would make it a clean 404; that needs a verified
+     deploy, so it is not done here.
+   - The deployment sits behind **Vercel deployment protection**: `POST
+     /api/stats/dashboard-data` answered **401 "Protected deployment"**, so the live site is
+     readable only by workspace members.
+   Fixing this needs a backend host plus `VITE_API_URL` at build time; do not remove the
+   gh-pages script or `vercel.json` without confirming which target is real. The hypothesis that
+   `vercel.json` is inert because it sits in `frontend/` and not the repo root is **false**: the
+   200s above prove it is read, so the deploy root is `frontend/`.
 9. **`README.md` is one line.** This file (AGENTS.md) is the de-facto documentation —
    keep it updated when contracts change.
 10. ~~**Nested `<button>` in `Tags.jsx`**~~ **fixed** (P1-52): the row is a `<div>`, the label
