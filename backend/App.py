@@ -1,7 +1,9 @@
 import os
 import json
 import re
-import calendar
+import math
+import time
+import secrets
 import random
 import jwt as pyjwt
 from datetime import datetime, timedelta, timezone
@@ -14,7 +16,39 @@ from functools import wraps
 from flask_cors import CORS
 
 
-SECRET_KEY = os.environ.get("SECRET_KEY", "planowanie-wydatkow-jwt")
+# --- JWT secret (AGENTS.md §9.5) ----------------------------------------------------------------
+# The old default was the literal "planowanie-wydatkow-jwt", i.e. a value every clone of the
+# repo knows. It is 23 bytes, which PyJWT flags (InsecureKeyLengthWarning: < 32 bytes for
+# HS256), and a forged token for any user_id was accepted: verified with
+# `pyjwt.encode({"user_id": 1, "username": "admin", ...}, "planowanie-wydatkow-jwt", "HS256")`
+# → GET /api/auth/status answered 200 as admin.
+# SECRET_KEY wins when the deployment sets it. Otherwise a 32-byte random secret is generated
+# once and persisted next to the DB, so tokens stay valid across restarts (a random-per-process
+# secret would invalidate every stored JWT on each boot, bouncing the SPA to /login).
+DATA_DIR = os.path.dirname(DB_PATH) or "."
+SECRET_FILE = os.path.join(DATA_DIR, ".jwt_secret")
+
+
+def _resolve_secret():
+    env = os.environ.get("SECRET_KEY")
+    if env:
+        return env
+    try:
+        with open(SECRET_FILE, "r") as fh:
+            val = fh.read().strip()
+        if val:
+            return val
+    except FileNotFoundError:
+        pass
+    val = secrets.token_hex(32)  # 64 chars → 64 bytes, above the HS256 minimum
+    os.makedirs(DATA_DIR, exist_ok=True)
+    fd = os.open(SECRET_FILE, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+    with os.fdopen(fd, "w") as fh:
+        fh.write(val)
+    return val
+
+
+SECRET_KEY = _resolve_secret()
 
 # Audit P0-9 / P0-38: with debug=True the Werkzeug debugger is reachable over the
 # network (interactive console, PIN derived from username+PID) and every unhandled
@@ -23,8 +57,55 @@ SECRET_KEY = os.environ.get("SECRET_KEY", "planowanie-wydatkow-jwt")
 DEBUG = os.environ.get("FLASK_DEBUG", "").lower() in ("1", "true", "yes")
 
 app = Flask(__name__)
-CORS(app)
+
+# `CORS(app)` echoes Access-Control-Allow-Origin: <any origin>, which was verified with an
+# OPTIONS preflight from https://evil.example.com. With a Bearer-token API that means any site
+# that gets hold of a token can read the whole budget back cross-origin.
+# Restrict to origins we actually serve: the dev SPA (Vite :5173, which proxies /api, so it is
+# same-origin and needs no CORS at all) and the deployed frontend, set via ALLOWED_ORIGINS.
+ALLOWED_ORIGINS = [
+    o.strip() for o in os.environ.get(
+        "ALLOWED_ORIGINS", "http://localhost:5173,http://127.0.0.1:5173"
+    ).split(",") if o.strip()
+]
+CORS(app, origins=ALLOWED_ORIGINS)
 app.config["SECRET_KEY"] = SECRET_KEY
+
+# No request-size limit existed (app.config["MAX_CONTENT_LENGTH"] was None), so a 10 MB
+# description body was accepted and stored (verified: POST /api/transactions with a
+# 10 000 000-char description answered 201). Cap the body and answer JSON 413 — the default
+# 413 handler returns HTML, which api.js cannot parse as data.error (AGENTS.md §6.1).
+MAX_CONTENT_LENGTH = 128 * 1024
+app.config["MAX_CONTENT_LENGTH"] = MAX_CONTENT_LENGTH
+
+# Login had no throttle: 20 failed attempts against an absent user cost 0.23ms each, so a
+# brute force over the username space is nearly free. Small in-process token bucket per
+# (ip, username); no external state, matching the minimal architecture.
+# Limits are env-tunable; LOGIN_LIMIT=0 disables the throttle (the test harness sets that, as
+# its fixtures create a fresh user per test from one IP, AGENTS.md §8).
+LOGIN_WINDOW_S = int(os.environ.get("LOGIN_WINDOW_S", "60"))
+LOGIN_LIMIT = int(os.environ.get("LOGIN_LIMIT", "10"))
+REGISTER_LIMIT = int(os.environ.get("REGISTER_LIMIT", "5"))
+_register_window = {}  # ip -> [timestamps]
+
+
+def _rate_limited(bucket_key, limit, window):
+    if limit <= 0:
+        return False
+    now = time.time()
+    hits = [t for t in _register_window.get(bucket_key, []) if now - t < window]
+    if len(hits) >= limit:
+        _register_window[bucket_key] = hits
+        return True
+    hits.append(now)
+    _register_window[bucket_key] = hits
+    return False
+
+
+# A hash to compare against when the username does not exist, so a failed login costs the same
+# as a wrong password on a real account. Without it the response time tells the caller whether
+# the username exists (measured: 42.2ms for an existing user vs 0.23ms for an absent one).
+_TIMING_HASH = generate_password_hash("timing-equaliser-not-a-real-password")
 
 
 def require_auth(f):
@@ -87,12 +168,124 @@ def owns_category(conn, cat_id, user_id, require_active=False):
     return conn.execute(sql, (cid, user_id)).fetchone() is not None
 
 
+MAX_USERNAME_LEN = 40
+MAX_CATEGORY_NAME_LEN = 60
+MAX_DESCRIPTION_LEN = 500
+MAX_TAG_LEN = 50
+MAX_ICON_LEN = 8
+
+
+def parse_amount(raw):
+    """A finite float, or None.
+
+    `float("1e999")` is +Infinity and `float("nan")` is NaN, both of which passed the
+    `< 0` / `<= 0` guards and were stored. SQLite keeps Infinity, and Flask's jsonify
+    emits the bare word `Infinity` — which is NOT valid JSON, so `api.js`'s
+    `response.json()` threw and the Budgets/Dashboard pages broke (verified: POST a budget
+    with 1e999, then POST /api/budgets/by-month-post → body contains "Infinity",
+    json.loads fails). A NaN amount hits the NOT NULL/CHECK constraint and surfaces as an
+    unhandled IntegrityError → 500. Booleans are rejected too: `amount: true` was accepted
+    as 1.0.
+    """
+    if isinstance(raw, bool):
+        return None
+    if isinstance(raw, (int, float)):
+        val = float(raw)
+    elif isinstance(raw, str):
+        # Accept the Polish decimal comma the UI types ("42,5").
+        s = raw.strip().replace(",", ".")
+        try:
+            val = float(s)
+        except ValueError:
+            return None
+    else:
+        return None
+    if not math.isfinite(val):
+        return None
+    return val
+
+
+def as_text(raw, max_len):
+    """A stripped string, or None for anything that is not a string / too long.
+
+    A non-string reaches the DBAPI and aborts the request with
+    `ProgrammingError: Error binding parameter N: type 'dict' is not supported` → 500
+    (verified for description and icon). Length caps stop a 100k-char value reaching the
+    column: the username is rendered raw in Layout.jsx, so a long one breaks the nav.
+    """
+    if raw is None:
+        return None
+    if not isinstance(raw, str):
+        return None
+    s = raw.strip()
+    if len(s) > max_len:
+        return None
+    return s
+
+
+def normalize_active(raw):
+    """Map active to 1/0, or None for an unusable value.
+
+    PUT /api/categories with `{"active": "abc"}` stored the literal TEXT 'abc' in an INTEGER
+    column (verified: typeof(active) = 'text'), and the category then vanished from
+    /api/categories/active — invisible in the add-expense dropdown, the budgets view and the
+    charts, with no way for the user to see why.
+    """
+    if raw is None:
+        return None
+    if isinstance(raw, bool):
+        return 1 if raw else 0
+    if isinstance(raw, (int, float)):
+        return 1 if int(raw) != 0 else 0
+    if isinstance(raw, str):
+        s = raw.strip().lower()
+        if s in ("true", "1", "yes"):
+            return 1
+        if s in ("false", "0", "no"):
+            return 0
+        return None
+    return None
+
+
+def normalize_order(raw):
+    """Map default_order to an int ≥ 0, or None. Same TEXT-in-INTEGER trap as active."""
+    if raw is None:
+        return None
+    if isinstance(raw, bool):
+        return None
+    if isinstance(raw, int):
+        return raw if raw >= 0 else None
+    if isinstance(raw, float):
+        return int(raw) if raw >= 0 and raw.is_integer() else None
+    if isinstance(raw, str):
+        s = raw.strip()
+        if s.isdigit():
+            return int(s)
+        return None
+    return None
+
+
+def like_escape(s):
+    """Escape the LIKE wildcards so a keyword is matched literally.
+
+    The search built "%" + keyword + "%", so a user typing `%` or `_` in the ExpensesView
+    search box got the whole month back: verified with descriptions 'abc' and '100% taniej',
+    keyword '%' → 2 rows, keyword '_' → 2 rows, keyword 'a%c' → 'abc' matched.
+    """
+    return s.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
+
+
 def parse_month(month):
     """Validate a "YYYY-MM" month key; return (year, mon) ints, or None if malformed.
 
     Unvalidated params used to blow up: "?month=abc" raised IndexError, "?month=2026-13"
     raised ValueError — both surfaced as 500 (audit P0-10). Validate at the boundary and
     answer 400 with JSON instead.
+
+    The year is now bounded to 1..9999 as well: `parse_month("99999-01")` used to succeed and
+    `month_window` then called `datetime(99999, 1, 1)` → unhandled ValueError
+    "year must be in 1..9999" → 500 on GET /api/transactions, POST
+    /api/budgets/by-month-post and POST /api/stats/dashboard-data.
     """
     parts = (month or "").split("-", 1)
     if len(parts) != 2 or not parts[0].isdigit() or not parts[1].isdigit():
@@ -100,14 +293,33 @@ def parse_month(month):
     year, mon = int(parts[0]), int(parts[1])
     if mon < 1 or mon > 12:
         return None
+    if year < 1 or year > 9999:
+        return None
     return (year, mon)
 
 
+def normalize_month(month):
+    """Canonical "YYYY-MM" (zero-padded), or None. The write boundary for Budgets.month_year."""
+    parsed = parse_month(month)
+    if not parsed:
+        return None
+    return f"{parsed[0]}-{parsed[1]:02d}"
+
+
 def month_window(year, mon):
-    """First day of year-mon and the first day of the next month, as "YYYY-MM-DD"."""
+    """First day of year-mon and the first day of the next month, as "YYYY-MM-DD".
+
+    Pure arithmetic — `datetime(year, mon, 1) + timedelta(days=32)` raised for a year above
+    9999 and for year 0 (the previous-month window of January year 1), which is what produced
+    the 500s. String dates are compared lexicographically everywhere, so arithmetic strings is
+    all this needs.
+    """
     first = f"{year}-{mon:02d}-01"
-    nxt = datetime(year, mon, 1) + timedelta(days=32)
-    return first, f"{nxt.year}-{nxt.month:02d}-01"
+    if mon == 12:
+        nxt_year, nxt_mon = year + 1, 1
+    else:
+        nxt_year, nxt_mon = year, mon + 1
+    return first, f"{nxt_year}-{nxt_mon:02d}-01"
 
 
 def normalize_date(raw):
@@ -154,6 +366,7 @@ def normalize_tags(raw):
 
 HEX_COLOR_RE = re.compile(r"^#[0-9a-fA-F]{6}$")
 DEFAULT_CATEGORY_COLOR = "#64748b"
+DEFAULT_ICON = "\U0001f4c1"
 
 
 def normalize_color(raw):
@@ -350,10 +563,15 @@ def register():
     confirm_password = data.get("confirmPassword") or ""
     if not username:
         return jsonify({"error": "Nazwa użytkownika jest wymagana"}), 400
+    if len(username) > MAX_USERNAME_LEN:
+        # A 100k-char username was accepted and is rendered raw in Layout.jsx.
+        return jsonify({"error": f"Nazwa użytkownika może mieć maksymalnie {MAX_USERNAME_LEN} znaków"}), 400
     if len(password) < 4:
         return jsonify({"error": "Hasło musi mieć co najmniej 4 znaki"}), 400
     if password != confirm_password:
         return jsonify({"error": "Hasła nie są identyczne"}), 400
+    if _rate_limited(f"register:{request.remote_addr}", REGISTER_LIMIT, LOGIN_WINDOW_S):
+        return jsonify({"error": "Zbyt wiele prób. Spróbuj później."}), 429
 
     conn = get_connection()
     try:
@@ -386,13 +604,22 @@ def login():
     username = (data.get("username") or "").strip()
     password = data.get("password") or ""
 
+    if _rate_limited(f"login:{request.remote_addr}:{username}", LOGIN_LIMIT, LOGIN_WINDOW_S):
+        return jsonify({"error": "Zbyt wiele prób logowania. Spróbuj później."}), 429
+
     conn = get_connection()
     try:
         user = conn.execute(
             "SELECT id, password_hash FROM Users WHERE username=?",
             (username,),
         ).fetchone()
-        if not user or not check_password_hash(user["password_hash"], password):
+        if not user:
+            # Equalise the cost of the two 401 paths. Without this the response time says
+            # whether the username exists (42.2ms vs 0.23ms measured), which is a username
+            # enumeration oracle and makes brute force almost free.
+            check_password_hash(_TIMING_HASH, password)
+            return jsonify({"error": "Nieprawidłowa nazwa użytkownika lub hasło"}), 401
+        if not check_password_hash(user["password_hash"], password):
             return jsonify({"error": "Nieprawidłowa nazwa użytkownika lub hasło"}), 401
 
         token = generate_token(user["id"], username)
@@ -483,12 +710,25 @@ def get_active_categories():
 @require_auth
 def create_category():
     data = request.get_json(silent=True) or {}
-    name = (data.get("name") or "").strip()
-    if not name:
+    raw_name = data.get("name")
+    name = as_text(raw_name, MAX_CATEGORY_NAME_LEN)
+    if name is None or not name:
+        if isinstance(raw_name, str) and len(raw_name.strip()) > MAX_CATEGORY_NAME_LEN:
+            return jsonify({"error": f"Nazwa kategorii może mieć maksymalnie {MAX_CATEGORY_NAME_LEN} znaków"}), 400
         return jsonify({"error": "Nazwa kategorii jest wymagana"}), 400
 
     color = (data.get("color") or "").strip()
-    icon = data.get("icon", "\U0001f4c1")
+    # icon was stored raw: a dict reached the DBAPI (ProgrammingError → 500) and a 100k-char
+    # string was accepted with 201. The contract (AGENTS.md §5) is a single emoji. An absent
+    # or null icon keeps the default folder emoji.
+    raw_icon = data.get("icon", DEFAULT_ICON)
+    if raw_icon is None:
+        raw_icon = DEFAULT_ICON
+    icon = as_text(raw_icon, MAX_ICON_LEN)
+    if icon is None:
+        return jsonify({"error": f"Ikona musi być tekstowym emoji (do {MAX_ICON_LEN} znaków)"}), 400
+    if not icon:
+        icon = DEFAULT_ICON
 
     conn = get_connection()
     try:
@@ -541,9 +781,9 @@ def update_category(cid):
 
         # Audit P1-27: renaming onto an existing category name was allowed.
         if data.get("name") is not None:
-            new_name = str(data["name"]).strip()
-            if not new_name:
-                return jsonify({"error": "Nazwa kategorii jest wymagana"}), 400
+            new_name = as_text(data["name"], MAX_CATEGORY_NAME_LEN)
+            if new_name is None or not new_name:
+                return jsonify({"error": f"Nazwa kategorii jest wymagana (do {MAX_CATEGORY_NAME_LEN} znaków)"}), 400
             dup = find_duplicate_category(conn, g.current_user_id, new_name, exclude_id=cid)
             if dup:
                 return jsonify({"error": f"Kategoria „{dup['name']}” już istnieje"}), 409
@@ -554,6 +794,30 @@ def update_category(cid):
             if not color_ok:
                 return jsonify({"error": "Kolor musi być wartością hex, np. #e74c3c"}), 400
             data["color"] = norm
+
+        # active and default_order were written verbatim, so {"active": "abc"} stored TEXT
+        # 'abc' in an INTEGER column and the category vanished from /api/categories/active
+        # (invisible in the add-expense dropdown, the budgets view and the charts). Same for
+        # default_order: "abc" broke ORDER BY default_order.
+        if data.get("active") is not None:
+            act = normalize_active(data["active"])
+            if act is None:
+                return jsonify({"error": "Pole active musi być true/false"}), 400
+            data["active"] = act
+
+        if data.get("default_order") is not None:
+            order = normalize_order(data["default_order"])
+            if order is None:
+                return jsonify({"error": "Kolejność musi być liczbą całkowitą"}), 400
+            data["default_order"] = order
+
+        if data.get("icon") is not None:
+            icon_val = as_text(data["icon"], MAX_ICON_LEN)
+            if icon_val is None:
+                return jsonify({"error": f"Ikona musi być tekstowym emoji (do {MAX_ICON_LEN} znaków)"}), 400
+            if not icon_val:
+                return jsonify({"error": "Ikona nie może być pusta"}), 400
+            data["icon"] = icon_val
 
         up_keys = ["name", "color", "icon", "default_order", "active"]
         set_clauses = []
@@ -690,17 +954,28 @@ def budgets_by_month_post():
 def create_budget():
     data = request.get_json(silent=True) or {}
     cat_id = data.get("category_id")
-    amt = data.get("amount_monthly")
-    my_str = (data.get("month_year") or "").strip()
+    raw_amount = data.get("amount_monthly")
+    raw_month = data.get("month_year")
 
-    if cat_id is None or amt is None or not my_str:
+    if cat_id is None or raw_amount is None or not raw_month:
         return jsonify({"error": "Brak wymaganych pól"}), 400
+
+    # month_year was inserted verbatim, so "2026-13", "abc", "2026-5", "2026-05-15" and
+    # "  2026-07  " all answered 201 (verified) and produced rows no month view can ever
+    # match — the "YYYY-MM" contract (AGENTS.md §5) is enforced by every read side, so an
+    # un-normalised key is invisible dead data that the year-summary string comparisons
+    # still count. Normalise at the write boundary.
+    amt = parse_amount(raw_amount)
+    if amt is None:
+        return jsonify({"error": "Nieprawidłowa kwota budżetu"}), 400
+    my_str = normalize_month(raw_month)
+    if my_str is None:
+        return jsonify({"error": "Miesiąc musi być w formacie YYYY-MM"}), 400
 
     try:
         cat_id = int(cat_id)
-        amt = float(amt)
     except (ValueError, TypeError):
-        return jsonify({"error": "Nieprawidłowy format"}), 400
+        return jsonify({"error": "Nieprawidłowe ID kategorii"}), 400
 
     if amt < 0:
         return jsonify({"error": "Kwota budżetu nie może być ujemna"}), 400
@@ -738,10 +1013,9 @@ def update_budget(bid):
 
     amt = None
     if "amount" in data or "amount_monthly" in data:
-        try:
-            amt = float(data.get("amount", data.get("amount_monthly")))
-        except (ValueError, TypeError):
-            return jsonify({"error": "Nieprawidłowy format"}), 400
+        amt = parse_amount(data.get("amount", data.get("amount_monthly")))
+        if amt is None:
+            return jsonify({"error": "Nieprawidłowa kwota"}), 400
         if amt < 0:
             return jsonify({"error": "Kwota nie może być ujemna"}), 400
 
@@ -832,8 +1106,11 @@ def get_transactions():
                 pass
 
         if keyword:
-            kw_pattern = "%" + keyword + "%"
-            query_text += " AND (t.description LIKE ? OR t.tags LIKE ?)"
+            # Escape the LIKE wildcards: a user typing "%" or "_" in the ExpensesView search
+            # box got the whole month back (verified: keyword '%' and '_' each matched every
+            # row). The pattern is matched literally, backslash is the escape char.
+            kw_pattern = "%" + like_escape(keyword) + "%"
+            query_text += " AND (t.description LIKE ? ESCAPE '\\' OR t.tags LIKE ? ESCAPE '\\')"
             params.extend([kw_pattern, kw_pattern])
 
         query_text += " ORDER BY t.date DESC"
@@ -868,8 +1145,11 @@ def create_transaction():
         return jsonify({"error": "Typ musi być „wydatek” lub „Przychod”"}), 400
 
     try:
-        amt = float(data["amount"])
-    except (ValueError, TypeError, KeyError):
+        amt = parse_amount(data.get("amount"))
+    except (ValueError, TypeError):
+        return jsonify({"error": "Kwota jest wymagana i musi być dodatnia"}), 400
+
+    if amt is None:
         return jsonify({"error": "Kwota jest wymagana i musi być dodatnia"}), 400
 
     if amt <= 0:
@@ -890,7 +1170,14 @@ def create_transaction():
     except (ValueError, TypeError):
         return jsonify({"error": "Nieprawidłowe ID kategorii"}), 400
 
-    description = data.get("description") or ""
+    # description is optional in the contract (AGENTS.md §6.2: description?), so an absent or
+    # null value means "". A value that is present must be a string within the cap.
+    raw_desc = data.get("description")
+    description = ""
+    if raw_desc is not None:
+        description = as_text(raw_desc, MAX_DESCRIPTION_LEN)
+        if description is None:
+            return jsonify({"error": f"Opis musi być tekstem (do {MAX_DESCRIPTION_LEN} znaków)"}), 400
 
     tags_raw = data.get("tags", [])
     tags_json_val = normalize_tags(tags_raw)
@@ -951,10 +1238,9 @@ def update_transaction(tid):
             params_final.append(txn_type_val)
 
         if "amount" in data:
-            try:
-                amt_val = float(data["amount"])
-            except (ValueError, TypeError):
-                return jsonify({"error": "Nieprawidłowy format"}), 400
+            amt_val = parse_amount(data["amount"])
+            if amt_val is None:
+                return jsonify({"error": "Nieprawidłowa kwota"}), 400
             if amt_val <= 0:
                 return jsonify({"error": "Kwota musi być większa od zera"}), 400
             set_parts.append("amount=?")
@@ -980,8 +1266,15 @@ def update_transaction(tid):
             params_final.append(cid)
 
         if "description" in data:
+            desc_val = data["description"]
+            if desc_val is not None:
+                desc_val = as_text(desc_val, MAX_DESCRIPTION_LEN)
+                if desc_val is None:
+                    return jsonify({"error": f"Opis musi być tekstem (do {MAX_DESCRIPTION_LEN} znaków)"}), 400
+            else:
+                desc_val = ""
             set_parts.append("description=?")
-            params_final.append(data["description"])
+            params_final.append(desc_val)
 
         if "tags" in data:
             tags_json_val = normalize_tags(data["tags"])
@@ -1087,6 +1380,8 @@ def _transform_user_tags(conn, user_id, fn):
 @app.route("/api/tags/<tag>", methods=["DELETE"])
 @require_auth
 def delete_tag(tag):
+    if len(tag) > MAX_TAG_LEN:
+        return jsonify({"error": f"Tag może mieć maksymalnie {MAX_TAG_LEN} znaków"}), 400
     conn = get_connection()
     try:
         n = _transform_user_tags(conn, g.current_user_id, lambda a: [x for x in a if x != tag])
@@ -1100,9 +1395,11 @@ def delete_tag(tag):
 @require_auth
 def rename_tag(tag):
     data = request.get_json(silent=True) or {}
-    new_name = (data.get("new_name") or "").strip()
-    if not new_name:
-        return jsonify({"error": "Nowa nazwa tagu jest wymagana"}), 400
+    new_name = as_text(data.get("new_name"), MAX_TAG_LEN)
+    if new_name is None or not new_name:
+        return jsonify({"error": f"Nowa nazwa tagu jest wymagana (do {MAX_TAG_LEN} znaków)"}), 400
+    if len(tag) > MAX_TAG_LEN:
+        return jsonify({"error": f"Tag może mieć maksymalnie {MAX_TAG_LEN} znaków"}), 400
     conn = get_connection()
     try:
         # dict.fromkeys keeps order and dedups: renaming "a"->"b" in a transaction that
@@ -1158,17 +1455,13 @@ def dashboard_data():
         # POST /api/budgets/by-month-post). Both queries removed.
 
         # Previous month spending for comparison
-        prev_first_month = int(mon_s) == 1
-        if prev_first_month:
-            prev_year_val = int(year_s) - 1
-            prev_mon_val = 12
+        if mon_s == 1:
+            prev_year_val, prev_mon_val = year_s - 1, 12
         else:
-            prev_year_val = int(year_s)
-            prev_mon_val = int(mon_s) - 1
-        
-        prev_month_start = f"{prev_year_val}-{str(prev_mon_val).zfill(2)}-01"
-        nxt_prev_dt = datetime(prev_year_val, prev_mon_val, 1) + timedelta(days=32)
-        prev_next_month = f"{nxt_prev_dt.year}-{str(nxt_prev_dt.month).zfill(2)}-01"
+            prev_year_val, prev_mon_val = year_s, mon_s - 1
+        # Arithmetic window, not datetime(): datetime(0, 12, 1) raised for January of year 1,
+        # which surfaced as a 500 on POST /api/stats/dashboard-data {"month":"0001-01"}.
+        prev_month_start, prev_next_month = month_window(prev_year_val, prev_mon_val)
 
         prev_row = conn.execute(
             "SELECT SUM(amount) AS t FROM Transactions WHERE user_id=? AND type='wydatek' AND date>=? AND date<?",
@@ -1410,6 +1703,14 @@ def method_not_allowed(e):
     # `api.js` cannot read (`data.error` is undefined → the toast shows "undefined").
     # Reached by GET on POST-only routes, e.g. /api/budgets/by-month-post (audit P0-25).
     return jsonify({"error": "Metoda nie jest dozwolona"}), 405
+
+
+@app.errorhandler(413)
+def payload_too_large(e):
+    # Same reason as the 405 handler: the default 413 response is HTML, so api.js reads
+    # `data.error` as undefined. With MAX_CONTENT_LENGTH set, an oversized body is refused
+    # before the route runs.
+    return jsonify({"error": f"Zbyt duże zgłoszenie (limit {MAX_CONTENT_LENGTH // 1024} kB)"}), 413
 
 
 @app.errorhandler(500)

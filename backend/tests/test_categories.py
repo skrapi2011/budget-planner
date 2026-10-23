@@ -205,3 +205,85 @@ class TestDelete:
         assert cid not in [r["cat_id"] for r in rows]
         rows2 = second_user.json(second_user.post("/api/budgets/by-month-post", json={"month": "2026-05"}))
         assert any(r["cat_id"] == cid and r["budzet"] == 500 for r in rows2)
+
+
+class TestWriteBoundary:
+    """icon, active, default_order and name: type and length validation at the write boundary."""
+
+    def test_non_string_icon_is_400(self, user):
+        for bad in [{"a": 1}, ["x"], 1, True]:
+            resp = user.post("/api/categories", json={"name": "IconProbe", "icon": bad})
+            assert resp.status_code == 400, bad
+            assert resp.is_json
+
+    def test_oversized_icon_is_400(self, user):
+        # The contract (§5) is a single emoji; a 100k-char string was accepted with 201.
+        resp = user.post("/api/categories", json={"name": "IconLong", "icon": "x" * 100000})
+        assert resp.status_code == 400
+
+    def test_a_single_emoji_icon_is_accepted(self, user):
+        resp = user.post("/api/categories", json={"name": "IconEmoji", "icon": "\U0001f600"})
+        assert resp.status_code == 201
+        assert resp.get_json()["icon"] == "\U0001f600"
+
+    def test_oversized_name_is_400(self, user):
+        resp = user.post("/api/categories", json={"name": "n" * 100000})
+        assert resp.status_code == 400
+
+    def test_put_with_string_active_is_400(self, user, category_ids):
+        # "abc" was written verbatim: typeof(active) became 'text' and the category vanished
+        # from /api/categories/active — invisible in the add-expense dropdown, the budgets view
+        # and the charts, with nothing the user can see.
+        from conftest import db_rows
+        cid = category_ids["Transport"]
+        resp = user.put(f"/api/categories/{cid}", json={"active": "abc"})
+        assert resp.status_code == 400
+        row = db_rows("SELECT active, typeof(active) t FROM Categories WHERE id=?", (cid,))[0]
+        assert row["t"] == "integer"
+        assert any(r["id"] == cid for r in user.json(user.get("/api/categories/active")))
+
+    def test_put_active_bool_round_trips(self, user, category_ids):
+        cid = category_ids["Transport"]
+        assert user.put(f"/api/categories/{cid}", json={"active": False}).status_code == 200
+        assert not any(r["id"] == cid for r in user.json(user.get("/api/categories/active")))
+        assert user.put(f"/api/categories/{cid}", json={"active": True}).status_code == 200
+        assert any(r["id"] == cid for r in user.json(user.get("/api/categories/active")))
+
+    def test_put_with_string_default_order_is_400(self, user, category_ids):
+        # Same TEXT-in-INTEGER trap: "abc" broke ORDER BY default_order.
+        from conftest import db_rows
+        cid = category_ids["Transport"]
+        resp = user.put(f"/api/categories/{cid}", json={"default_order": "abc"})
+        assert resp.status_code == 400
+        row = db_rows("SELECT default_order, typeof(default_order) t FROM Categories WHERE id=?", (cid,))[0]
+        assert row["t"] == "integer"
+
+    def test_put_default_order_as_string_digits_is_accepted_as_int(self, user, category_ids):
+        from conftest import db_rows
+        cid = category_ids["Transport"]
+        # "3" is a legitimate numeric order (the frontend sends ints; the string form must not
+        # land as TEXT in the INTEGER column, which broke ORDER BY default_order).
+        resp = user.put(f"/api/categories/{cid}", json={"default_order": "0"})
+        assert resp.status_code == 200
+        row = db_rows("SELECT default_order, typeof(default_order) t FROM Categories WHERE id=?", (cid,))[0]
+        assert row["default_order"] == 0 and row["t"] == "integer"
+        # Ordering follows the numeric value, not a lexicographic one: order 0 is first.
+        rows = user.json(user.get("/api/categories"))
+        assert [r["id"] for r in rows][0] == cid
+
+    def test_non_string_icon_on_put_is_400(self, user, category_ids):
+        cid = category_ids["Transport"]
+        resp = user.put(f"/api/categories/{cid}", json={"icon": {"a": 1}})
+        assert resp.status_code == 400
+
+
+class TestOptionalIcon:
+    def test_category_without_icon_uses_the_default(self, user):
+        resp = user.post("/api/categories", json={"name": "BezIkony"})
+        assert resp.status_code == 201
+        assert resp.get_json()["icon"] == "\U0001f4c1"
+
+    def test_null_icon_uses_the_default(self, user):
+        resp = user.post("/api/categories", json={"name": "NullIkona", "icon": None})
+        assert resp.status_code == 201
+        assert resp.get_json()["icon"] == "\U0001f4c1"

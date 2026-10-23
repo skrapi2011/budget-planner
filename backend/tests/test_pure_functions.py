@@ -6,6 +6,7 @@ These are the boundary validators added in the audit pass: unvalidated `month`/`
 
 import pytest
 
+import App
 from App import (
     parse_month,
     month_window,
@@ -13,6 +14,12 @@ from App import (
     normalize_color,
     DEFAULT_CATEGORY_COLOR,
     SECRET_KEY,
+    parse_amount,
+    as_text,
+    normalize_active,
+    normalize_order,
+    normalize_month,
+    like_escape,
 )
 
 
@@ -126,16 +133,48 @@ class TestNormalizeColor:
         assert normalize_color(DEFAULT_CATEGORY_COLOR)[1] is True
 
 
-def test_secret_key_is_not_the_hardcoded_default_in_tests():
-    # AGENTS.md §9.5: the default secret is weak. Tests do not set SECRET_KEY, so this
-    # documents the current state — flip it to assert an env override when deployment does.
-    assert SECRET_KEY == "planowanie-wydatkow-jwt"
+def test_secret_key_is_not_a_known_default():
+    # AGENTS.md §9.5 was the weakness: the fallback was the literal "planowanie-wydatkow-jwt",
+    # which every clone of the repo knows, so a forged token for user_id=1 was accepted
+    # (GET /api/auth/status answered 200 as admin). The secret now comes from the SECRET_KEY
+    # env var, or from a generated 32-byte value persisted next to the DB.
+    assert SECRET_KEY != "planowanie-wydatkow-jwt"
 
 
-def test_secret_key_is_too_short_for_hmac_sha256():
-    # PyJWT 2.10+ warns at 23 bytes (RFC 7518 wants ≥ 32). The warning in the pytest output is
-    # the evidence for §9.5; this test pins it so the number cannot silently grow shorter.
-    assert len(SECRET_KEY.encode()) < 32
+def test_secret_key_is_long_enough_for_hmac_sha256():
+    # RFC 7518 §3.2 wants ≥ 32 bytes for HS256; PyJWT 2.10+ emits InsecureKeyLengthWarning
+    # below that, which is what the old 23-byte default did on every token.
+    assert len(SECRET_KEY.encode()) >= 32
+
+
+def test_generated_secret_is_persisted_and_mode_600(tmp_path):
+    # A random-per-process secret would invalidate every stored JWT on each restart, bouncing
+    # the SPA to /login. The value is written to .jwt_secret next to the DB, with 0600.
+    import os
+    import subprocess
+    import sys
+    import pathlib
+
+    backend_dir = str(pathlib.Path(App.__file__).resolve().parent)
+    script = (
+        "import os,sys;"
+        "os.environ.pop('SECRET_KEY',None);"
+        f"sys.path.insert(0,{backend_dir!r});"
+        "import App;"
+        "print(App.SECRET_KEY, len(App.SECRET_KEY), oct(os.stat(App.SECRET_FILE).st_mode & 0o777),"
+        " App.SECRET_FILE == os.path.join(os.path.dirname(App.DB_PATH), '.jwt_secret'))"
+    )
+    env = dict(os.environ)
+    env.pop("SECRET_KEY", None)
+    env["DATABASE_PATH"] = str(tmp_path / "baza.db")
+    out = subprocess.run([sys.executable, "-c", script], capture_output=True, text=True, env=env, check=True)
+    secret, length, mode, is_next_to_db = out.stdout.split()
+    assert int(length) == 64
+    assert mode == "0o600"
+    assert is_next_to_db == "True"
+    # A second import reads the same secret, so tokens survive a restart.
+    out2 = subprocess.run([sys.executable, "-c", script], capture_output=True, text=True, env=env, check=True)
+    assert out2.stdout.split()[0] == secret
 
 
 def test_env_secret_override_wins():
@@ -154,3 +193,97 @@ def test_env_secret_override_wins():
         else:
             os.environ["SECRET_KEY"] = old
         importlib.reload(__import__("App", fromlist=["SECRET_KEY"]))
+
+
+class TestParseAmount:
+    """float() accepted Infinity/NaN/True and they passed the < 0 / <= 0 guards."""
+
+    def test_finite_values(self):
+        assert parse_amount(42.5) == 42.5
+        assert parse_amount("120") == 120.0
+        assert parse_amount("42,5") == 42.5      # the Polish decimal comma the UI types
+        assert parse_amount(0) == 0.0
+
+    def test_non_finite_is_none(self):
+        for bad in [1e999, float("inf"), float("-inf"), float("nan"), "1e999", "inf", "nan"]:
+            assert parse_amount(bad) is None, bad
+
+    def test_bool_is_none(self):
+        # amount: true was accepted as 1.0
+        assert parse_amount(True) is None
+        assert parse_amount(False) is None
+
+    def test_non_numeric_is_none(self):
+        for bad in [None, "abc", {}, [], "42abc"]:
+            assert parse_amount(bad) is None, bad
+
+
+class TestAsText:
+    def test_string_within_cap(self):
+        assert as_text("  dom  ", 50) == "dom"
+
+    def test_overlong_is_none(self):
+        assert as_text("x" * 100000, 500) is None
+
+    def test_non_string_is_none(self):
+        # A dict reached the DBAPI and aborted the request with ProgrammingError → 500.
+        for bad in [{"a": 1}, ["x"], 1, True, None]:
+            assert as_text(bad, 500) is None, bad
+
+
+class TestNormalizeActiveOrder:
+    def test_active_forms(self):
+        assert normalize_active(True) == 1
+        assert normalize_active(False) == 0
+        assert normalize_active(1) == 1
+        assert normalize_active(0) == 0
+        assert normalize_active("true") == 1
+        assert normalize_active("false") == 0
+        assert normalize_active("abc") is None
+        assert normalize_active({"a": 1}) is None
+
+    def test_order_forms(self):
+        assert normalize_order(3) == 3
+        assert normalize_order("3") == 3
+        assert normalize_order(0) == 0
+        assert normalize_order(-1) is None
+        assert normalize_order("abc") is None
+        assert normalize_order("3.5") is None
+        assert normalize_order(True) is None
+
+
+class TestNormalizeMonth:
+    def test_canonical(self):
+        assert normalize_month("2026-5") == "2026-05"
+        assert normalize_month("2026-12") == "2026-12"
+
+    def test_rejects_the_forms_the_read_side_cannot_match(self):
+        # Every one of these used to be stored verbatim with a 201.
+        for bad in ["2026-13", "abc", "2026-05-15", "2026-00", "99999-01", "0-12", "2026-5-1", " 2026-07"]:
+            assert normalize_month(bad) is None, bad
+
+
+class TestLikeEscape:
+    def test_wildcards_escaped(self):
+        assert like_escape("100%") == "100\\%"
+        assert like_escape("a_b") == "a\\_b"
+        assert like_escape("back\\slash") == "back\\\\slash"
+
+    def test_plain_text_unchanged(self):
+        assert like_escape("zakupy") == "zakupy"
+
+
+class TestMonthWindowArithmetic:
+    """month_window() used datetime(...)+timedelta(days=32), which raised outside 1..9999."""
+
+    def test_december_wraps_the_year(self):
+        assert month_window(2026, 12) == ("2026-12-01", "2027-01-01")
+
+    def test_9999_does_not_raise(self):
+        first, nxt = month_window(9999, 12)
+        assert first == "9999-12-01"
+        assert nxt.startswith("10000-01")
+
+    def test_leap_february_window(self):
+        first, nxt = month_window(2028, 2)
+        assert nxt == "2028-03-01"

@@ -301,3 +301,95 @@ class TestDelete:
         tid = self._tx_id(second_user, second_category_ids["Transport"])
         assert user.delete(f"/api/transactions/{tid}").status_code == 403
         assert len(txs(second_user, "?month=2026-05")) == 1
+
+
+class TestWriteBoundary:
+    """Amount, description and keyword-search hardening on the transaction routes."""
+
+    def test_non_finite_amount_is_rejected(self, user, category_ids):
+        cid = category_ids["Transport"]
+        for bad in [1e999, float("inf"), float("nan"), "1e999", "nan", True, "abc", None]:
+            resp = user.post("/api/transactions", tx_body(cid, amount=bad))
+            assert resp.status_code == 400, bad
+            assert resp.is_json
+        # NaN used to reach the CHECK/NOT NULL constraint as an unhandled IntegrityError → 500.
+        assert len(txs(user, "?month=all")) == 0
+
+    def test_response_body_is_strict_json(self, user, category_ids):
+        # A stored Infinity made Flask emit the bare word `Infinity`, which is not valid JSON:
+        # api.js threw on response.json() and the page died.
+        import json
+        cid = category_ids["Transport"]
+        create(user, cid, amount=12.5, date="2031-06-01")
+        resp = user.get("/api/transactions?month=2031-06")
+        assert "Infinity" not in resp.data.decode()
+        assert json.loads(resp.data)[0]["amount"] == 12.5
+
+    def test_non_string_description_is_400(self, user, category_ids):
+        cid = category_ids["Transport"]
+        for bad in [{"a": 1}, ["x"], 1, True]:
+            resp = user.post("/api/transactions", tx_body(cid, desc=bad))
+            assert resp.status_code == 400, bad
+        # A long one is capped (a 10MB body is refused by MAX_CONTENT_LENGTH, tested in test_auth).
+        resp = user.post("/api/transactions", tx_body(cid, desc="y" * 600))
+        assert resp.status_code == 400
+
+    def test_keyword_wildcards_are_matched_literally(self, user, category_ids):
+        cid = category_ids["Transport"]
+        create(user, cid, amount=5, date="2031-07-01", desc="abc")
+        create(user, cid, amount=7, date="2031-07-02", desc="100% taniej")
+        # '%' and '_' are LIKE wildcards: unescaped, keyword '%' and '_' each matched every
+        # row of the month. Now they are literal, so '%' hits only the row that really
+        # contains a percent sign, '_' hits none, and 'a%c' hits none.
+        for kw, expected in [("%", 1), ("_", 0), ("a%c", 0), ("100%", 1), ("taniej", 1), ("abc", 1)]:
+            rows = txs(user, f"?month=2031-07&keyword={kw}")
+            assert len(rows) == expected, (kw, len(rows))
+
+    def test_put_rejects_non_finite_amount(self, user, category_ids):
+        cid = category_ids["Transport"]
+        create(user, cid, amount=5, date="2031-08-01")
+        tid = txs(user, "?month=2031-08")[0]["id"]
+        resp = user.put(f"/api/transactions/{tid}", json={"amount": 1e999})
+        assert resp.status_code == 400
+        assert txs(user, "?month=2031-08")[0]["amount"] == 5.0
+
+    def test_put_rejects_non_string_description(self, user, category_ids):
+        cid = category_ids["Transport"]
+        create(user, cid, amount=5, date="2031-09-01", desc="keep me")
+        tid = txs(user, "?month=2031-09")[0]["id"]
+        resp = user.put(f"/api/transactions/{tid}", json={"description": {"a": 1}})
+        assert resp.status_code == 400
+        # The rejected update wrote nothing.
+        assert txs(user, "?month=2031-09")[0]["description"] == "keep me"
+
+
+class TestOptionalFields:
+    """description? and tags? stay optional (AGENTS.md §6.2). Making them required was a
+    regression I introduced while hardening the write boundary — the probe caught it, and this
+    pins it: the frontend sends `description: data.description || ''`, so '' is the common
+    case, and an omitted key must stay legal.
+    """
+
+    def test_transaction_without_description_is_accepted(self, user, category_ids):
+        cid = category_ids["Transport"]
+        resp = user.post("/api/transactions", {
+            "type": "wydatek", "amount": 10, "date": "2031-10-01", "category_id": cid,
+        })
+        assert resp.status_code == 201
+        assert resp.get_json()["description"] == ""
+
+    def test_null_description_is_accepted_as_empty(self, user, category_ids):
+        cid = category_ids["Transport"]
+        resp = user.post("/api/transactions", {
+            "type": "wydatek", "amount": 10, "date": "2031-10-02", "category_id": cid,
+            "description": None,
+        })
+        assert resp.status_code == 201
+        assert resp.get_json()["description"] == ""
+
+    def test_put_with_null_description_sets_empty(self, user, category_ids):
+        cid = category_ids["Transport"]
+        create(user, cid, amount=5, date="2031-11-01", desc="stare")
+        tid = txs(user, "?month=2031-11")[0]["id"]
+        assert user.put(f"/api/transactions/{tid}", json={"description": None}).status_code == 200
+        assert txs(user, "?month=2031-11")[0]["description"] == ""

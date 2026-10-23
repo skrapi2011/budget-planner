@@ -29,6 +29,16 @@ os.close(_fd)
 os.unlink(_db_path)          # start empty; init_db() will create it
 os.environ["DATABASE_PATH"] = _db_path
 
+# A fixed secret for the suite: App.py now generates and persists a random secret when
+# SECRET_KEY is unset, so a test that decodes a token needs the value App.py will use. Set it
+# before import (same reason as DATABASE_PATH) and ≥ 32 bytes, so PyJWT does not emit
+# InsecureKeyLengthWarning for every token in the suite.
+os.environ["SECRET_KEY"] = "test-secret-for-the-suite-32-bytes!"
+# The login/register throttle is disabled for the suite: the fixtures create a fresh user per
+# test from one IP, and 5 registrations per 60s is exactly what they exhaust.
+os.environ["LOGIN_LIMIT"] = "0"
+os.environ["REGISTER_LIMIT"] = "0"
+
 import App  # noqa: E402  (side-effect import is the point of this conftest)
 
 
@@ -168,9 +178,9 @@ def ids_of(resp):
 
 
 def user_id_for_token(token):
-    """The numeric user id behind a JWT (the payload is unsigned-plain, not encrypted)."""
+    """The numeric user id behind a JWT, decoded with the secret App.py is using."""
     import jwt as pyjwt
-    return pyjwt.decode(token, "planowanie-wydatkow-jwt", algorithms=["HS256"])["user_id"]
+    return pyjwt.decode(token, App.SECRET_KEY, algorithms=["HS256"])["user_id"]
 
 
 def user_id_of(user):

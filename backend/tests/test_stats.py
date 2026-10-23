@@ -272,3 +272,43 @@ class TestYearSummary:
 
     def test_year_as_int_is_accepted(self, user):
         assert user.post("/api/stats/year-summary", json={"year": 2026}).status_code == 200
+
+
+class TestMonthRange:
+    """parse_month bounded the month (1..12) but not the year, so a year outside
+    datetime's 1..9999 range raised an unhandled ValueError → 500. Verified on
+    GET /api/transactions?month=99999-01, POST /api/budgets/by-month-post and
+    POST /api/stats/dashboard-data; POST dashboard {"month":"0001-01"} raised on the
+    previous-month window (datetime(0, 12, 1)).
+    """
+
+    def _post(self, user, month):
+        return user.post("/api/stats/dashboard-data", json={"month": month})
+
+    def test_year_above_9999_is_400_not_500(self, user):
+        for month in ["99999-01", "10000-01", "0000-01"]:
+            resp = self._post(user, month)
+            assert resp.status_code == 400, month
+            assert resp.is_json
+            assert "YYYY-MM" in resp.get_json()["error"]
+
+    def test_january_of_year_1_yields_an_empty_previous_window(self, user):
+        resp = self._post(user, "0001-01")
+        assert resp.status_code == 200
+        body = resp.get_json()
+        # January has a previous month in the arithmetic, and year 0 is simply outside the
+        # date space, so the window is empty — not a crash.
+        assert body["prev_month_total"] == 0
+        assert body["total_all_time"] == 0
+
+    def test_year_9999_is_accepted(self, user):
+        resp = self._post(user, "9999-12")
+        assert resp.status_code == 200
+        assert resp.get_json()["monthly_history"]
+
+    def test_transactions_and_budgets_views_reject_the_same_month(self, user):
+        assert user.get("/api/transactions?month=99999-01").status_code == 400
+        assert user.post("/api/budgets/by-month-post", json={"month": "99999-01"}).status_code == 400
+        # The boundary years still work.
+        assert user.get("/api/transactions?month=9999-12").status_code == 200
+        assert user.get("/api/transactions?month=0001-01").status_code == 200

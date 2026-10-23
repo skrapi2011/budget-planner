@@ -159,3 +159,83 @@ class TestErrorShape:
         resp = user.get("/api/budgets/by-month-post")
         assert resp.status_code == 405
         assert resp.is_json
+
+
+class TestTokenAndThrottle:
+    """The auth hardening: forged-token rejection, oversized input, throttle, timing, CORS."""
+
+    def test_forged_token_with_the_old_default_secret_is_rejected(self, client):
+        # AGENTS.md §9.5. The old fallback was the literal "planowanie-wydatkow-jwt", so anyone
+        # who knew it could mint a token for user_id=1 and read the admin's whole budget.
+        forged = pyjwt.encode(
+            {"user_id": 1, "username": "admin", "exp": int(time.time()) + 3600},
+            "planowanie-wydatkow-jwt",
+            algorithm="HS256",
+        )
+        resp = client.get("/api/auth/status", headers={"Authorization": f"Bearer {forged}"})
+        assert resp.status_code == 401
+
+    def test_a_token_signed_with_the_real_secret_is_accepted(self, client, admin_token):
+        # The counterpart: the gate still accepts the secret App.py actually uses.
+        resp = client.get("/api/auth/status", headers={"Authorization": f"Bearer {admin_token}"})
+        assert resp.status_code == 200
+
+    def test_hs512_token_is_rejected(self, client):
+        # algorithms=["HS256"] is not decoration: an algorithm-signature confusion attack must
+        # not validate.
+        tok = pyjwt.encode({"user_id": 1, "username": "admin"}, "x" * 40, algorithm="HS512")
+        resp = client.get("/api/auth/status", headers={"Authorization": f"Bearer {tok}"})
+        assert resp.status_code == 401
+
+    def test_oversized_username_is_rejected(self, client):
+        # A 100k-char username was accepted with 201, and Layout.jsx renders the username raw.
+        resp = client.post(
+            "/api/auth/register",
+            json={"username": "x" * 100000, "password": "abcd", "confirmPassword": "abcd"},
+        )
+        assert resp.status_code == 400
+        assert resp.is_json
+
+    def test_login_is_throttled_per_ip_and_username(self, client, monkeypatch, admin_token):
+        import App
+
+        monkeypatch.setattr(App, "LOGIN_LIMIT", 3)
+        for i in range(3):
+            assert client.post("/api/auth/login", json={"username": "admin", "password": "nope"}).status_code == 401
+        resp = client.post("/api/auth/login", json={"username": "admin", "password": "admin123"})
+        assert resp.status_code == 429
+        assert resp.is_json
+        assert "prób" in resp.get_json()["error"]
+        # A different username has its own bucket, and the throttle does not lock everyone out.
+        assert client.post("/api/auth/login", json={"username": "admin", "password": "admin123"}).status_code == 429
+
+    def test_failed_login_for_an_absent_user_costs_a_password_hash(self, client):
+        # The enumeration oracle: hashing only ran for existing users, so the response time
+        # answered "does this username exist?" (measured 42.2ms vs 0.23ms). Now the cost is
+        # equalised by comparing against a fixed dummy hash.
+        runs = []
+        for _ in range(5):
+            t0 = time.time()
+            resp = client.post("/api/auth/login", json={"username": "definitely_absent_user", "password": "nope"})
+            runs.append(time.time() - t0)
+            assert resp.status_code == 401
+        assert resp.is_json
+        mean_ms = 1000 * sum(runs) / len(runs)
+        assert mean_ms > 5, f"hash cost missing: mean {mean_ms:.2f}ms"
+
+    def test_cors_does_not_echo_an_arbitrary_origin(self, client):
+        # CORS(app) echoed Access-Control-Allow-Origin: <any>, so any site holding a token could
+        # read the whole budget back cross-origin.
+        resp = client.options("/api/categories", headers={"Origin": "https://evil.example.com"})
+        allow = resp.headers.get("Access-Control-Allow-Origin", "")
+        assert allow != "https://evil.example.com"
+        assert allow != "*"
+
+    def test_oversized_body_is_refused_as_json_413(self, client, user):
+        # MAX_CONTENT_LENGTH was None, so a 10MB body was accepted and stored.
+        big = {"type": "wydatek", "amount": 1, "date": "2031-04-01", "category_id": 1,
+              "description": "y" * 200000}
+        resp = user.post("/api/transactions", json=big)
+        assert resp.status_code == 413
+        assert resp.is_json
+        assert "limit" in resp.get_json()["error"]

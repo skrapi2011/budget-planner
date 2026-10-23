@@ -160,3 +160,30 @@ class TestTagsAreJsonArrays:
         create_tx(user, category_ids["Transport"], ["dom", "zakupy"])
         raw = db_rows("SELECT tags FROM Transactions ORDER BY id DESC LIMIT 1")[0]["tags"]
         assert json.loads(raw) == ["dom", "zakupy"]
+
+
+class TestTagLength:
+    """Tag names come from the URL path and the rename body; both were length-unbounded."""
+
+    def test_rename_to_an_overlong_name_is_400(self, user, category_ids):
+        create_tx(user, category_ids["Transport"], ["dom"])
+        resp = user.put("/api/tags/dom", json={"new_name": "n" * 100000})
+        assert resp.status_code == 400
+        assert resp.is_json
+        assert "dom" in tags_of(user)  # nothing was renamed
+
+    def test_delete_with_an_overlong_tag_is_400(self, user, category_ids):
+        create_tx(user, category_ids["Transport"], ["dom"])
+        resp = user.delete(f"/api/tags/{'n' * 100000}")
+        assert resp.status_code == 400
+
+    def test_empty_new_name_is_400(self, user, category_ids):
+        create_tx(user, category_ids["Transport"], ["dom"])
+        assert user.put("/api/tags/dom", json={"new_name": "   "}).status_code == 400
+
+    def test_a_normal_rename_still_works(self, user, category_ids):
+        create_tx(user, category_ids["Transport"], ["dom"])
+        resp = user.put("/api/tags/dom", json={"new_name": "home"})
+        assert resp.status_code == 200
+        assert resp.get_json()["renamed_in"] == 1
+        assert "home" in tags_of(user) and "dom" not in tags_of(user)
