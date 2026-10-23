@@ -99,6 +99,11 @@ def _rate_limited(bucket_key, limit, window):
         return True
     hits.append(now)
     _register_window[bucket_key] = hits
+    if len(_register_window) > 1000:
+        # The per-key lists are pruned on every call, but the keys themselves never were, so
+        # a long-running process accumulates one entry per (ip, username) it has ever seen.
+        for key in [k for k, v in _register_window.items() if not v or now - max(v) >= window]:
+            del _register_window[key]
     return False
 
 

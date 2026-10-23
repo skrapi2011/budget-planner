@@ -239,3 +239,20 @@ class TestTokenAndThrottle:
         assert resp.status_code == 413
         assert resp.is_json
         assert "limit" in resp.get_json()["error"]
+
+
+def test_rate_limit_buckets_are_pruned():
+    # The per-key hit lists were pruned on every call, the keys themselves never were, so a
+    # long-running process accumulated one entry per (ip, username) it had ever seen.
+    import App
+
+    App._register_window.clear()
+    old = time.time() - App.LOGIN_WINDOW_S * 2
+    for i in range(1001):
+        App._register_window[f"login:127.0.0.1:u{i}"] = [old]
+    assert len(App._register_window) > 1000
+    App._rate_limited("login:127.0.0.1:admin", App.LOGIN_LIMIT or 3, App.LOGIN_WINDOW_S)
+    assert len(App._register_window) <= 1000
+    # The bucket that is still inside the window survives.
+    assert "login:127.0.0.1:admin" in App._register_window
+    App._register_window.clear()
