@@ -83,7 +83,10 @@ jobs:
           path: frontend/dist
           retention-days: 7
 
-  # A single check name to require in branch protection: "CI / summary".
+  # A single check name to require in branch protection: "CI summary". GitHub reports the
+  # check as the job name, so it is "CI summary" (not "CI / summary") — that is the string to
+  # put in required_status_checks.contexts. It is currently required (strict) with
+  # enforce_admins on, which also blocks a direct push to main.
   # Both suites must be green for it to go green.
   summary:
     name: CI summary
