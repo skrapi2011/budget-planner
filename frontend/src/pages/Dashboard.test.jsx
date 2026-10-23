@@ -1,4 +1,4 @@
-import { describe, it, expect, beforeEach, vi } from 'vitest';
+import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import { render, screen, act } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { MemoryRouter, Routes, Route, useSearchParams } from 'react-router-dom';
@@ -7,6 +7,7 @@ import Dashboard from './Dashboard';
 import { ThemeProvider } from '../ThemeProvider';
 import { AuthProvider } from '../AuthProvider';
 import ToastProvider from '../components/ToastProvider';
+import { settle } from '../test/renderPage';
 import { currentMonthStr, monthLabel } from '../utils/date';
 
 // The dashboard deep-links to /wydatki?kategoria=<id>&miesiac=<month>, so the assertion is
@@ -36,6 +37,17 @@ function renderDashboard() {
     </MemoryRouter>,
   );
 }
+
+// Render, then flush promises + every animation frame on FAKE timers. The stat-card numbers
+// are count-up animated, so real-time findByText timeouts fail on a starved CI runner where
+// jsdom's rAF fires far slower than 16ms (this is the shape of the 6 CI failures).
+function renderAndSettle() {
+  vi.useFakeTimers();
+  renderDashboard();
+  return settle();
+}
+
+afterEach(() => vi.useRealTimers());
 
 const DASH = {
   total_all_time: 5000,
@@ -212,36 +224,40 @@ describe('stat cards', () => {
   });
 
   it('shows the planned, monthly and all-time figures', async () => {
-    renderDashboard();
-    await screen.findByText('700,00 zł', { timeout: 2000 });
+    await renderAndSettle();
+    expect(screen.getByText('700,00 zł')).toBeInTheDocument();
     // 440 is both the month card and the donut centre sum.
-    expect(await screen.findAllByText('440,00 zł')).toHaveLength(2);
-    // Every card counts up from zero, so the settled value is awaited, not read synchronously.
-    expect(await screen.findByText('5000,00 zł', { timeout: 2000 })).toBeInTheDocument();
+    expect(screen.getAllByText('440,00 zł')).toHaveLength(2);
+    // Every card counts up from zero, so the value is read only after the animation settles.
+    expect(screen.getByText('5000,00 zł')).toBeInTheDocument();
   });
 
   it('shows the month-on-month change against the previous month', async () => {
-    renderDashboard();
+    await renderAndSettle();
     // 440 vs 400 → +10% (up arrow), difference +40, labelled with the two months compared.
-    expect(await screen.findByText('↑ 10%')).toBeInTheDocument();
-    // The difference is a count-up animation, so it lands after the 500ms duration.
-    expect(await screen.findByText('+40,00 zł', { timeout: 2000 })).toBeInTheDocument();
+    expect(screen.getByText('↑ 10%')).toBeInTheDocument();
+    // The difference is a count-up animation, so it is read after the settle.
+    expect(screen.getByText('+40,00 zł')).toBeInTheDocument();
     expect(screen.getByText(/vs/)).toBeInTheDocument();
   });
 
   it('a zero previous month with spending shows no percentage and says so', async () => {
     api.getDashboardData.mockResolvedValue({ ...DASH, prev_month_total: 0, month_total: 50 });
-    renderDashboard();
-    await screen.findByText('Wydatki w tym miesiącu');
-    expect(await screen.findByText('—')).toBeInTheDocument();
+    await renderAndSettle();
+    expect(screen.getByText('—')).toBeInTheDocument();
     expect(screen.getByText('Brak danych za poprzedni miesiąc')).toBeInTheDocument();
-    expect(await screen.findByText('+50,00 zł', { timeout: 2000 })).toBeInTheDocument();
+    expect(screen.getByText('+50,00 zł')).toBeInTheDocument();
   });
 
   it('values animate up from zero (useCountUp)', async () => {
+    vi.useFakeTimers();
     renderDashboard();
-    // Mid-animation the card shows a value below the target, and settles on it.
-    expect(await screen.findByText('700,00 zł', { timeout: 2000 })).toBeInTheDocument();
+    // After a single frame the card is still below the target …
+    await act(async () => { await vi.advanceTimersByTimeAsync(16); });
+    expect(screen.queryByText('700,00 zł')).toBeNull();
+    // … and it settles on the target after the 500 ms duration.
+    await settle();
+    expect(screen.getByText('700,00 zł')).toBeInTheDocument();
   });
 });
 
@@ -357,12 +373,9 @@ describe('category budget rows', () => {
   });
 
   it('the progress bar animates from zero to its target width', async () => {
-    renderDashboard();
-    await screen.findByText('Budżet miesięczny');
-    // useAnimatedValue starts at 0 and reaches the target after the first animation frame,
-    // so the widths are re-read (not snapshotted) inside the wait.
+    await renderAndSettle();
     const widths = () => Array.from(document.querySelectorAll('.h-full.rounded-full')).map(d => d.style.width);
-    await vi.waitFor(() => expect(widths()).toContain('40%'));
+    expect(widths()).toContain('40%');
     expect(widths()).toContain('90%');
     expect(widths()).toContain('150%');   // Media: 150/100 is not clamped — the parent's overflow-hidden clips it
   });

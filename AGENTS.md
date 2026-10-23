@@ -398,7 +398,7 @@ Route paths are **Polish and part of the contract** — don't rename them withou
 ## 8. Verification workflow
 
 There is **no CI**, but there **is a test suite** (added after the second audit round):
-**255 backend + 335 frontend tests, all green.** A green run is the pre-existing state — if a
+**255 backend + 342 frontend tests, all green.** A green run is the pre-existing state — if a
 change breaks one, fix the code, not the assertion.
 
 ```bash
@@ -416,6 +416,24 @@ cd frontend && npm test -- --run          # single run (no watch)
   block sets `environment: 'jsdom'`, `globals: true`, `setupFiles`), so the JSX transform and
   the Tailwind plugin are identical to the dev/build pipeline. `src/test/setup.js` pins
   `NODE_ENV=test`, stubs `matchMedia` and clears `localStorage` between tests.
+- ⚠️ **Animation assertions must be deterministic — use fake timers.** `src/test/setup.js`
+  re-implements `requestAnimationFrame`/`cancelAnimationFrame` on top of the timer set that
+  vitest fakes (16 ms per frame, stamp from `Date.now()`), because jsdom's own rAF is driven by
+  jsdom's event loop, which `vi.useFakeTimers()` does not control, and because a loaded shared
+  CI runner fires rAF far slower than 16 ms. The pattern is:
+  ```js
+  vi.useFakeTimers();
+  renderWithProviders(<Budgets />);
+  await settle();            // from src/test/renderPage.jsx
+  expect(screen.getByText('700,00 zł')).toBeInTheDocument();
+  ```
+  `settle()` loops `runAllTimersAsync` until the timer queue is empty — **more than one pass is
+  required**: the mocked `api.js` promise resolves as a microtask after the first pass has
+  drained, so the count-up for the loaded data starts only on the second. End every such file
+  with `afterEach(() => vi.useRealTimers())`. Do not assert animated values with
+  `findByText(..., { timeout: 2000 })` — that is the shape of the CI failure (6 animation
+  assertions failed twice on the runner, and reproduce locally when 4 vitest runs compete for
+  CPU).
 - `npm run lint` is clean for `src/` and for `eslint .` (`dist`/`dist_probe` are ignored).
 
 For changes the suite does not cover, verify manually in this order:

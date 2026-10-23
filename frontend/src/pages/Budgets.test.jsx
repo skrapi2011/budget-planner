@@ -1,9 +1,9 @@
-import { describe, it, expect, beforeEach, vi } from 'vitest';
+import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import { screen, waitFor, fireEvent, act } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import * as api from '../api';
 import Budgets from './Budgets';
-import { renderWithProviders } from '../test/renderPage';
+import { renderWithProviders, settle } from '../test/renderPage';
 import { currentMonthStr, monthLabel } from '../utils/date';
 import * as dateUtils from '../utils/date';
 
@@ -33,6 +33,16 @@ beforeEach(() => {
 async function renderAndLoad() {
   renderWithProviders(<Budgets />);
   await screen.findByText('Transport');
+}
+
+// Animation assertions below run on fake timers; never leak them into the next case.
+afterEach(() => vi.useRealTimers());
+
+// Render + flush promises + all animation frames in one step (see test/renderPage.jsx).
+function renderLoaded() {
+  vi.useFakeTimers();
+  renderWithProviders(<Budgets />);
+  return settle();
 }
 
 describe('loading', () => {
@@ -143,30 +153,29 @@ describe('race guard (audit P1-51)', () => {
 
 describe('summary cards', () => {
   it('totals the budgets and the spending', async () => {
-    await renderAndLoad();
-    // The card figures are count-up animated (useCountUp, 500 ms), so the final value
-    // arrives asynchronously — findByText waits for the animation to settle.
+    // The card figures are count-up animated (useCountUp, 500 ms). Fake timers settle the
+    // animation exactly, so the assertion does not depend on runner speed.
+    await renderLoaded();
     expect(screen.getByText('Całkowity budżet')).toBeInTheDocument();
     // 500+100+100 = 700 budgeted, 200+90+150 = 440 spent, 260 left.
-    expect(await screen.findByText('700,00 zł', { timeout: 2000 })).toBeInTheDocument();
-    expect(await screen.findByText('440,00 zł', { timeout: 2000 })).toBeInTheDocument();
-    expect(await screen.findByText('260,00 zł', { timeout: 2000 })).toBeInTheDocument();
+    expect(screen.getByText('700,00 zł')).toBeInTheDocument();
+    expect(screen.getByText('440,00 zł')).toBeInTheDocument();
+    expect(screen.getByText('260,00 zł')).toBeInTheDocument();
     expect(screen.getByText('Pozostało')).toBeInTheDocument();
   });
 
   it('shows the utilisation percentage', async () => {
-    await renderAndLoad();
+    await renderLoaded();
     // 440/700 = 62.857 → "62.9%": the progress card shows the bare figure, the spent card
     // appends "wykorzystane" in the same text node, so they are two distinct nodes.
-    expect(await screen.findByText('62.9%', { timeout: 2000 })).toBeInTheDocument();
+    expect(screen.getByText('62.9%')).toBeInTheDocument();
     expect(screen.getByText('62.9% wykorzystane')).toBeInTheDocument();
   });
 
   it('a negative remainder is shown as a Polish overrun message', async () => {
     api.getBudgetsViewByMonth.mockResolvedValue([{ cat_id: 1, category_id: 1, category_name: 'Transport', id: 10, budzet: 100, wydatki: 150, saldo: -50, status: 'over_budget' }]);
-    renderWithProviders(<Budgets />);
-    await screen.findByText('Transport');
-    expect(await screen.findByText(/Przekroczono budżet o 50,00 zł/, { timeout: 2000 })).toBeInTheDocument();
+    await renderLoaded();
+    expect(screen.getByText(/Przekroczono budżet o 50,00 zł/)).toBeInTheDocument();
   });
 });
 

@@ -65,9 +65,10 @@ jobs:
       - name: Lint
         run: npm run lint
 
-      # --retry=1: the count-up/progress-bar animation tests are timing-sensitive, so a
-      # loaded shared runner can miss an animated value on the first attempt. A retry
-      # distinguishes a real regression from runner jitter.
+      # The animation assertions run on FAKE timers (see src/test/setup.js + settle() in
+      # src/test/renderPage.jsx), so they do not depend on how fast the runner fires rAF.
+      # --retry=1 stays as a safety net for any remaining timing-sensitive case; a retry that
+      # fails twice is a real regression, not runner jitter.
       - name: Unit tests
         run: npm test -- --retry=1
 
