@@ -12,11 +12,14 @@ const navItems = [
    { to:'/year', label: 'Roczny Przegląd' },
  ]
 
-export default function Layout({ children, username }) {
+export default function Layout({ children }) {
   const [menuOpen, setMenuOpen] = useState(false)
   const location = useLocation()
   const navigate = useNavigate()
-  const { logout } = useAuth()
+  // Pages passed a `user` prop that none of them ever defined (every page is
+  // rendered as <Page /> by App.jsx), so the nav bar never showed the name.
+  // Read it from AuthContext instead (audit P0-18).
+  const { user, logout } = useAuth()
   const { isDark, toggleTheme } = useTheme()
 
   const handleLogout = async () => {
@@ -71,23 +74,30 @@ export default function Layout({ children, username }) {
             <div className="flex items-center gap-3">
               <button
                 type="button"
-                onClick={toggleTheme}
+                onClick={(e) => {
+                  // Measure the button rather than reading clientX/clientY: a
+                  // keyboard-triggered click (Enter/Space) reports 0,0, which would wipe
+                  // the theme in from the top-left corner.
+                  const r = e.currentTarget.getBoundingClientRect();
+                  toggleTheme({ x: r.left + r.width / 2, y: r.top + r.height / 2 });
+                }}
                 className="p-2 rounded-md text-gray-400 hover:text-[#32a852] hover:bg-gray-100 transition-colors dark:hover:bg-slate-700 dark:text-slate-400"
                 aria-label={isDark ? 'Tryb jasny' : 'Tryb ciemny'}
               >
+                {/* key forces a remount so theme-icon-swap replays on every switch */}
                 {isDark ? (
-                  <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <svg key="theme-icon-dark" className="w-5 h-5 theme-icon-swap" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                     <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 3v1m0 16v1m9-9h-1M4 12H3m15.364 6.364l-.707-.707M6.343 6.343l-.707-.707m12.728 0l-.707.707M6.343 17.657l-.707.707M16 12a4 4 0 11-8 0 4 4 0 018 0z" />
                   </svg>
                 ) : (
-                  <svg className="w-5 h-5" fill="currentColor" viewBox="0 0 24 24">
+                  <svg key="theme-icon-light" className="w-5 h-5 theme-icon-swap" fill="currentColor" viewBox="0 0 24 24">
                     <path d="M21.752 15.002A9.718 9.718 0 0118 15.75c-5.385 0-9.75-4.365-9.75-9.75 0-1.33.266-2.597.748-3.752A9.753 9.753 0 003 11.25C3 16.635 7.365 21 12.75 21a9.753 9.753 0 009.002-5.998z" />
                   </svg>
                 )}
               </button>
 
-              {username && (
-                <span className="text-sm font-medium text-gray-700 hidden sm:inline dark:text-slate-300">{username}</span>
+              {user && (
+                <span className="text-sm font-medium text-gray-700 hidden sm:inline dark:text-slate-300">{user}</span>
               )}
               <button
                 type="button"

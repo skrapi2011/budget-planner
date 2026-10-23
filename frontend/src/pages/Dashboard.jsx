@@ -1,36 +1,25 @@
-import { useState, useEffect } from 'react';
-let darkMQ = typeof window !== 'undefined' ? window.matchMedia('(prefers-color-scheme: dark)') : null;
-function useDark() {
-  const [dark, setDark] = useState(darkMQ?.matches ?? false);
-  useEffect(() => {
-    if (!darkMQ) return;
-    const handler = (e) => setDark(e.matches);
-    darkMQ.addEventListener('change', handler);
-    return () => darkMQ.removeEventListener('change', handler);
-  }, []);
-  return dark || false;
-}
+import { useState, useEffect, useCallback, useRef } from 'react';
+import { useNavigate } from 'react-router-dom';
 import Layout from '../components/Layout';
 import AddExpenseModal from '../components/AddExpenseModal';
+import { currentMonthStr, monthLabel } from '../utils/date';
+import { formatMoney } from '../utils/money';
+import { useAnimatedValue, useCountUp } from '../hooks/animation';
+import { useToast } from '../components/ToastContext';
 import * as api from '../api';
 import { PieChart, Pie, Cell, BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, Legend, ResponsiveContainer } from 'recharts';
 
-const MONTH_NAMES = [
-  'Styczeń', 'Luty', 'Marzec', 'Kwiecień', 'Maj', 'Czerwiec',
-  'Lipiec', 'Sierpień', 'Wrzesień', 'Październik', 'Listopad', 'Grudzień'
-];
-
 const GREEN = '#32a852';
 
-function getCurrentMonth() {
-  const now = new Date();
-  return `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}`;
-}
+// Audit P1-50: this file defined a local useDark() reading the system media query, so the
+// manual theme toggle in Layout never reached the page. The only consumer was one text
+// colour in CategoryRow, which Tailwind's dark: variant handles with no JS at all — the
+// hook is gone (AGENTS.md §7.4 says not to copy this pattern).
 
-export default function Dashboard({ user }) {
+export default function Dashboard() {
   const [loading, setLoading] = useState(true);
   const [modalOpen, setModalOpen] = useState(false);
-  const [monthStr, setMonthStr] = useState(getCurrentMonth());
+  const [monthStr, setMonthStr] = useState(currentMonthStr());
   const [timeFilter, setTimeFilter] = useState('12m');
 
   // Data from /api/stats/dashboard-data
@@ -39,11 +28,19 @@ export default function Dashboard({ user }) {
   const [catBudgets, setCatBudgets] = useState([]);
   // Active categories for modal dropdown
   const [activeCategories, setActiveCategories] = useState([]);
-  const isDark = useDark();
+  const navigate = useNavigate();
+  const { success, error: toastError } = useToast();
+  // Audit P1-51: switching months quickly fires overlapping requests, and the older response
+  // could land after the newer one and overwrite it. A request id makes the write
+  // conditional on being the latest (YearOverview already had a `cancelled` guard; this is
+  // the same idea for a callback loader).
+  const reqIdRef = useRef(0);
 
-  useEffect(() => { loadDashboard(); }, [monthStr]);
-
-  async function loadDashboard() {
+  // useCallback keeps the loader stable per month so the effect deps are honest
+  // (audit P1-31: exhaustive-deps warning on the fetch effect). Declared before the
+  // effect that calls it.
+  const loadDashboard = useCallback(async () => {
+    const myId = ++reqIdRef.current;
     setLoading(true);
     try {
       const [data, rawBudgets, catList] = await Promise.all([
@@ -51,10 +48,12 @@ export default function Dashboard({ user }) {
         api.getBudgetsViewByMonth(monthStr).catch(e => { console.warn('getBudgetsView failed', e); return []; }),
         api.getCategories(true).catch(() => []),
       ]);
+      if (reqIdRef.current !== myId) return;   // a newer month started; drop this response
       setDashData(data);
       setActiveCategories(catList || []);
       // Map budget response to chart-friendly format
       const budgetsMapped = (rawBudgets || []).map(c => ({
+        id: c.cat_id,
         name: c.category_name,
         color: c.color,
         icon: c.icon,
@@ -65,17 +64,30 @@ export default function Dashboard({ user }) {
       setCatBudgets(budgetsMapped);
     } catch (e) {
       console.error('loadDashboard error', e);
+      if (reqIdRef.current !== myId) return;
       setDashData(null);
       setActiveCategories([]);
       setCatBudgets([]);
     } finally {
-      setLoading(false);
+      if (reqIdRef.current === myId) setLoading(false);
     }
-  }
+  }, [monthStr]);
 
+  // Deferred by one microtask: setLoading(true) inside the loader is no longer a
+  // synchronous setState in the effect body (react-hooks/set-state-in-effect, audit P1-31).
+  useEffect(() => { Promise.resolve().then(loadDashboard); }, [monthStr, loadDashboard]);
+
+  // The modal closes right after onSubmit, so a rejected save has to be handled here:
+  // an unhandled rejection used to close the modal with no message at all (ExpensesView
+  // already catches; the Dashboard did not).
   const handleAddExpense = async (data) => {
-    await api.addTransaction(data);
-    loadDashboard();
+    try {
+      await api.addTransaction(data);
+      success(data.type === 'Przychod' ? 'Przychod dodany' : 'Wydatek dodany');
+      loadDashboard();
+    } catch (e) {
+      toastError(e?.message || 'Nie udało się zapisać — sprawdź połączenie z serwerem');
+    }
   };
 
   // Navigation
@@ -102,17 +114,11 @@ export default function Dashboard({ user }) {
     return dashData.monthly_history.slice(-count);
   };
 
-  if (loading || !dashData) {
-    return <Layout username={user}><div className="flex items-center justify-center py-24"><div className="w-10 h-10 border-4 border-gray-200 border-t-[#32a852] rounded-full animate-spin" /></div></Layout>;
+  if (!dashData) {
+    return <Layout><div className="flex items-center justify-center py-24"><div className="w-10 h-10 border-4 border-gray-200 dark:border-slate-700 border-t-[#32a852] rounded-full animate-spin" /></div></Layout>;
   }
 
-  const { total_all_time = 0, prev_month_total = 0, month_total = 0, planned_all_time = 0, current_planned = 0, chart_data = [], monthly_history = [] } = dashData;
-
-  function getPrevMonthLabel() {
-    const [y, m] = monthStr.split('-').map(Number);
-    if (m === 1) return `${MONTH_NAMES[11]} ${y - 1}`;
-    return MONTH_NAMES[m - 2];
-  }
+  const { total_all_time = 0, prev_month_total = 0, month_total = 0, current_planned = 0, monthly_history = [] } = dashData;
 
   function getChangePct(current, previous) {
     if ((previous ?? 0) === 0) return current > 0 ? null : 0;
@@ -123,25 +129,36 @@ export default function Dashboard({ user }) {
   const changePct = getChangePct(month_total, prev_month_total);
 
   return (
-    <Layout username={user}>
+    <Layout>
+      <div key={monthStr} className={`page-enter max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8 transition-opacity ${loading ? 'opacity-50 pointer-events-none' : ''}`}>
       {/* Month Navigation */}
       <div className="flex items-center justify-between mb-8">
-        <button onClick={prevMonth} className="p-2 rounded-lg bg-white dark:bg-slate-800 shadow-sm hover:bg-gray-50 dark:hover:slate-700 transition-colors text-gray-600 dark:text-slate-300 border border-gray-200 dark:border-slate-700">
+        <button onClick={prevMonth} aria-label="poprzedni miesiąc" className="p-2 rounded-lg bg-white dark:bg-slate-800 shadow-sm hover:bg-gray-50 dark:hover:bg-slate-700 transition-colors text-gray-600 dark:text-slate-300 border border-gray-200 dark:border-slate-700">
           <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 19l-7-7 7-7" /></svg>
         </button>
-        <h2 className="text-xl font-bold text-gray-800 dark:text-slate-200">
-          {MONTH_NAMES[parseInt(monthStr.split('-')[1], 10) - 1]} {monthStr.split('-')[0]}
-        </h2>
-       <button onClick={nextMonth} className="p-2 rounded-lg bg-white dark:bg-slate-800 shadow-sm hover:bg-gray-50 dark:hover:slate-700 transition-colors text-gray-600 dark:text-slate-300 border border-gray-200 dark:border-slate-700">
+        <div className="flex items-center gap-3">
+          <h2 className="text-xl font-bold text-gray-800 dark:text-slate-200">
+            {monthLabel(monthStr)}
+          </h2>
+          <button
+            onClick={() => setMonthStr(currentMonthStr())}
+            className={`text-xs font-semibold px-2 py-1 rounded-md transition-colors ${
+              monthStr === currentMonthStr() ? 'bg-[#32a852]/10 text-[#32a852]' : 'text-[#32a852] hover:bg-[#32a852]/10'
+            }`}
+          >
+            Dziś
+          </button>
+        </div>
+       <button onClick={nextMonth} aria-label="następny miesiąc" className="p-2 rounded-lg bg-white dark:bg-slate-800 shadow-sm hover:bg-gray-50 dark:hover:bg-slate-700 transition-colors text-gray-600 dark:text-slate-300 border border-gray-200 dark:border-slate-700">
           <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5l7 7-7 7" /></svg>
         </button>
       </div>
 
       {/* Stat Cards */}
-      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-6 mb-8">
+      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-6 mb-8 stagger-children">
         <StatCard label="Budżet miesięczny" value={current_planned} icon={<IconCurrent />} color="#8b5cf6" />
         <StatCard label="Wydatki w tym miesiącu" value={month_total} icon={<IconMonth />} color="#3b82f6" />
-        <StatCard2 label="Zmiana wydatków" change={changePct} absDiff={month_total - prev_month_total} monthStr={monthStr} icon={<IconChange />} color={changePct !== null ? (changePct > 0 ? '#ef4444' : '#32a852') : 'var(--tw-text-muted)'} />
+        <StatCard2 label="Zmiana wydatków" change={changePct} absDiff={month_total - prev_month_total} monthStr={monthStr} icon={<IconChange />} color={changePct !== null ? (changePct > 0 ? '#ef4444' : '#32a852') : '#94a3b8'} />
         <StatCard label="Wydatki całość" value={total_all_time} icon={<IconAllTime />} color="#ef4444" />
       </div>
 
@@ -156,33 +173,51 @@ export default function Dashboard({ user }) {
             const sorted = [...monthCat].sort((a, b) => (b.expenditure || 0) - (a.expenditure || 0));
             const monthTotal = monthCat.reduce((s, c) => s + (Number(c.expenditure)||0), 0);
 
+            // Deep link to ExpensesView filtered by this category (?kategoria=<id>),
+            // carrying the month currently shown on the Dashboard (?miesiac=YYYY-MM).
+            const goCategory = (entry) => {
+              const id = entry?.id ?? entry?.payload?.id;
+              if (id != null) navigate(`/wydatki?kategoria=${id}&miesiac=${monthStr}`);
+            };
+
             return (
-              <div className="flex items-center gap-6">
+              <div className="flex flex-col sm:flex-row items-center gap-6">
                 {/* Category list on the left */}
 <div 
                   style={{ 
                     maxHeight: '260px', 
-                    minWidth: '160px', 
                     overflowY: 'auto'
                   }}
-                   className="no-scrollbar space-y-2 shrink-0 rounded-xl border border-gray-300 dark:border-slate-600 p-4"
+                   className="no-scrollbar space-y-2 w-full sm:w-auto sm:min-w-[160px] min-w-0 rounded-xl border border-gray-300 dark:border-slate-600 p-4"
                 >
 {sorted.map((item) => (
-                    <div key={item.name} className="flex items-center gap-2 py-1">
+                    <button
+                      key={item.name}
+                      type="button"
+                      onClick={() => goCategory(item)}
+                      title={`Pokaż wydatki: ${item.name}`}
+                      className="w-full flex items-center gap-2 py-1 rounded-md px-1 -mx-1 transition-colors hover:bg-gray-100 dark:hover:bg-slate-700/60 cursor-pointer"
+                    >
                       <span style={{ backgroundColor: item.color || '#94a3b8' }} className="w-3 h-3 rounded-full shrink-0" />
-                      <div className="flex flex-col">
-                        <span className="text-sm font-medium text-gray-700 dark:text-slate-200">{item.name}</span>
+                      <div className="flex flex-col min-w-0">
+                        <span className="text-sm font-medium text-gray-700 dark:text-slate-200 truncate">{item.name}</span>
                         <span className="text-xs text-gray-400 dark:text-slate-500">{formatMoney(item.expenditure)}</span>
                       </div>
-                    </div>
+                    </button>
                   ))}
                 </div>
                 {/* Pie chart on the right */}
-                <div className="relative shrink-0">
-                  <ResponsiveContainer width={280} height={260}>
+                {/* Needs a definite width: ResponsiveContainer width="100%" renders an inner
+                    div with width:0 (so ResizeObserver can detect shrinking), so a percentage
+                    inside an auto-width flex item resolves to 0 and recharts renders nothing
+                    (isAcceptableSize rejects width<=0). The Suma overlay is absolute at
+                    left:50% of that box, so a 0-width box also pushed it onto the category
+                    list. w-full resolves against the flex column; sm:w-[280px] is explicit. */}
+                <div className="relative w-full min-w-0 sm:w-[280px] sm:shrink-0">
+                  <ResponsiveContainer width="100%" height={260}>
                     <PieChart>
                       <Pie
-                        data={sorted.map(c => ({ name: c.name, value: Number(c.expenditure) || 0, color: c.color }))}
+                        data={sorted.map(c => ({ id: c.id, name: c.name, value: Number(c.expenditure) || 0, color: c.color }))}
                         cx="50%"
                         cy="50%"
                         outerRadius="85%"
@@ -192,9 +227,10 @@ export default function Dashboard({ user }) {
                         dataKey="value"
                         nameKey="name"
                         stroke="none"
+                        onClick={goCategory}
                       >
                         {sorted.map((entry, i) => (
-                          <Cell key={`cell-${i}`} fill={entry.color || '#94a3b8'} />
+                          <Cell key={`cell-${i}`} fill={entry.color || '#94a3b8'} style={{ cursor: 'pointer' }} />
                         ))}
                       </Pie>
                       <Tooltip content={<CustomTooltip />} />
@@ -234,7 +270,7 @@ export default function Dashboard({ user }) {
           {!monthly_history || monthly_history.length === 0 ? (
            <p className="text-center text-gray-400 dark:text-slate-500 py-12">Brak danych miesięcznych.</p>
           ) : (
-            <ResponsiveContainer width={550} height={340}>
+            <ResponsiveContainer width="100%" height={340}>
               <BarChart data={getBarChartData()} margin={{ top: 10, right: 20, left: 10, bottom: 10 }}>
                 <CartesianGrid strokeDasharray="3 3" stroke="#e5e7eb" />
                 {timeFilter === '3m' || timeFilter === '6m' ? (
@@ -259,13 +295,14 @@ export default function Dashboard({ user }) {
         ) : (
           <div className="space-y-4 max-h-[500px] overflow-y-auto pr-2 custom-scrollbar">
             {catBudgets.map((c, idx) => (
-              <CategoryRow key={idx} cat={c} isDark={isDark} />
+              <CategoryRow key={idx} cat={c} />
             ))}
           </div>
         )}
       </Card>
+      </div>
 
-      <AddExpenseModal isOpen={modalOpen} onClose={() => setModalOpen(false)} onSubmit={handleAddExpense} activeCategories={activeCategories} />
+      <AddExpenseModal key={`add-${modalOpen}`} isOpen={modalOpen} onClose={() => setModalOpen(false)} onSubmit={handleAddExpense} activeCategories={activeCategories} />
 
 
       {/* Floating add button */}
@@ -290,10 +327,10 @@ function Card({ title, children }) {
   );
 }
 
-function StatCard({ label, value, icon, color, badge }) {
+function StatCard({ label, value, icon, color }) {
+  const animated = useCountUp(value);
   return (
      <div className="bg-white dark:bg-slate-800 rounded-xl shadow-sm hover:shadow-md transition-shadow p-5 relative overflow-hidden">
-       {badge && <span className="absolute top-3 right-4 text-xs font-medium bg-gray-100 dark:bg-slate-700 text-gray-600 dark:text-slate-300 px-2 py-0.5 rounded-full">{badge}</span>}
        <div className="flex items-center gap-3 mb-3">
          <div style={{ backgroundColor: color + '20' }} className="w-10 h-10 rounded-lg flex items-center justify-center shrink-0">
            {icon}
@@ -301,24 +338,24 @@ function StatCard({ label, value, icon, color, badge }) {
          <span className="text-sm font-medium text-gray-600 dark:text-slate-400">{label}</span>
        </div>
 
-       <p className={`text-2xl font-bold`} style={{ color }}>{formatMoney(value)}</p>
+       <p className={`text-2xl font-bold`} style={{ color }}>{formatMoney(animated)}</p>
      </div>
    );
  }
 
 
 function StatCard2({ label, change, absDiff: propAbsDiff, monthStr: ms, icon, color: arrowColor }) {
-  const [prevLabel, setPrevLabel] = useState('');
-
-  useEffect(() => {
-    if (!ms) return;
+  // Pure derivation of ms — no state/effect needed (audit P1-31: setState in effect).
+  const prevLabel = (() => {
+    if (!ms) return '';
     const [y, m] = ms.split('-').map(Number);
-    let py, pm;
-    if (m === 1) { py = y - 1; pm = 12; } else { py = y; pm = m - 1; }
-    setPrevLabel(`${MONTH_NAMES[pm - 1]} ${py}`);
- }, [ms]);
+    const py = m === 1 ? y - 1 : y;
+    const pm = m === 1 ? 12 : m - 1;
+    return monthLabel(`${py}-${String(pm).padStart(2, '0')}`);
+  })();
 
   const absDiffRaw = Number(propAbsDiff) || 0;
+  const animatedDiff = useCountUp(absDiffRaw);
   const sign = absDiffRaw >= 0 ? '+' : '';
 
   return (
@@ -331,7 +368,7 @@ function StatCard2({ label, change, absDiff: propAbsDiff, monthStr: ms, icon, co
       </div>
 
       <p className="text-xs text-gray-500 dark:text-slate-400 mb-2">
-        {ms ? MONTH_NAMES[parseInt(ms.split('-')[1], 10) - 1] : ''} vs {prevLabel || '—'}
+        {ms ? monthLabel(ms).split(' ')[0] : ''} vs {prevLabel || '—'}
       </p>
 
       <div className="flex items-baseline gap-3 flex-wrap">
@@ -339,7 +376,7 @@ function StatCard2({ label, change, absDiff: propAbsDiff, monthStr: ms, icon, co
           {change !== null && change > 0 ? `↑ ${Math.abs(change)}%` : (change !== null ? `↓ ${Math.abs(change)}%` : '—')}
         </p>
         <p className={`text-lg font-bold`} style={{ color: arrowColor }}>
-          {sign}{formatMoney(absDiffRaw)}
+          {sign}{formatMoney(animatedDiff)}
         </p>
       </div>
 
@@ -350,7 +387,7 @@ function StatCard2({ label, change, absDiff: propAbsDiff, monthStr: ms, icon, co
   );
  }
 
-function CategoryRow({ cat, isDark }) {
+function CategoryRow({ cat }) {
   const wydatki = cat.expenditure || 0;
   const budzet = cat.budget || 0;
   
@@ -360,16 +397,23 @@ function CategoryRow({ cat, isDark }) {
     ? Math.max(5, (wydatki / budzet) * 100) 
     : (wydatki > 0 ? 5 : 0);
 
+  // Kółko i pasek zawsze w tym samym kolorze: kolor kategorii, a gdy kategoria
+  // przekroczyła budżet — czerwony (jako sygnał statusu).
+  const overBudget = budzet > 0 && wydatki > budzet;
+  const swatchColor = overBudget ? '#ef4444' : (cat.color || '#94a3b8');
+  // Animacja szerokości paska: od 0 przy montowaniu, płynnie między wartościami.
+  const animatedWidth = useAnimatedValue(rawPct);
+
   return (
     <div className="border-b border-gray-100 dark:border-slate-700 pb-3">
       <div className="flex items-center justify-between mb-2" style={{ flexWrap: 'wrap', gap: '8px' }}>
         <div className="flex items-center gap-3">
-          <span style={{ backgroundColor: cat.color || '#94a3b8' }} className="w-4 h-4 rounded-full shrink-0 shadow-sm border border-gray-100 dark:border-slate-600" />
+          <span style={{ backgroundColor: swatchColor }} className="w-4 h-4 rounded-full shrink-0 shadow-sm border border-gray-100 dark:border-slate-600" />
           <span className="font-medium text-gray-800 dark:text-slate-200">{cat.name}</span>
         </div>
         <div className="text-right">
           {budzet > 0 && (
-            <p className={`text-xs ${isDark ? 'text-slate-400' : 'text-gray-500'}`}>{wydatki.toFixed(2)} / {budzet} zł</p>
+            <p className="text-xs text-gray-500 dark:text-slate-400">{formatMoney(wydatki)} / {formatMoney(budzet)}</p>
           )}
           <span style={{ color: balance >= 0 ? GREEN : '#dc2626' }} className="text-sm font-bold">
             {(balance > 0 ? '+' : '')}{formatMoney(balance)}
@@ -382,10 +426,10 @@ function CategoryRow({ cat, isDark }) {
            {/* 'overflow-hidden' na rodzicu sprawia, że pasek szerokości >100% po prostu zniknie za krawędzią */}
           <div
             style={{ 
-              width: `${rawPct}%`,
-              backgroundColor: wydatki > budzet ? '#ef4444' : (cat.color || '#3b82f6') 
+              width: `${animatedWidth}%`,
+              backgroundColor: swatchColor
             }}
-            className="h-full rounded-full transition-all duration-700"
+            className="h-full rounded-full transition-all duration-700 ease-out"
           />
         </div>
       )}
@@ -398,11 +442,6 @@ function IconAllTime() { return <svg className="w-5 h-5 text-[#ef4444]" fill="no
 function IconMonth() { return <svg className="w-5 h-5 text-[#3b82f6]" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.8} d="M8 7V3m8 4V3m-9 8h10M5 21h14a2 2 0 000-4H5a2 2 0 000 4z" /></svg>; }
 function IconCurrent() { return <svg className="w-5 h-5 text-[#8b5cf6]" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.8} d="M12 8c-3.866 0-7 1.567-7 3.5V14a2 2 0 002 2h2v-2.5m14 0H9" /></svg>; }
 function IconChange() { return <svg className="w-5 h-5 text-[#f59e0b]" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.8} d="M7 16V4m0 0L3 8m4-4l4 4m6 0v12m0 0l4-4m-4 4l-4-4" /></svg>; }
-
-function formatMoney(v) {
-  v = Number(v || 0);
-  return `${v.toLocaleString('pl-PL', { minimumFractionDigits: 2, maximumFractionDigits: 2 })} zł`;
-}
 
 function CustomTooltip({ active, payload }) {
   if (!active || !payload?.length) return null;

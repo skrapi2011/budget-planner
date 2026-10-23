@@ -1,15 +1,23 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useCallback, useRef } from 'react';
 import Layout from '../components/Layout';
 import * as api from '../api';
 import AddBudgetModal from '../components/AddBudgetModal';
+import { currentMonthStr, monthLabel } from '../utils/date';
+import { formatMoney } from '../utils/money';
+import { useAnimatedValue, useCountUp } from '../hooks/animation';
+import { useToast } from '../components/ToastContext';
 
-const MONTH_NAMES = [
-  'Styczeń', 'Luty', 'Marzec', 'Kwiecień', 'Maj', 'Czerwiec',
-  'Lipiec', 'Sierpień', 'Wrzesień', 'Październik', 'Listopad', 'Grudzień'
-];
+// Inline edycja trzyma w stanie CIĄG (to, co user wpisuje) — parseFloat('') daje NaN,
+// który lądował w value={...} i input wyświetlał literalne „NaN" (audit P0-16).
+const parseAmt = (v) => {
+  const n = parseFloat(v);
+  return Number.isFinite(n) ? n : null;
+};
 
+// Backend status is exactly 'over_budget' | 'in_budget' (see _budgets_view); the old
+// 'przekroczony' string never reaches the frontend (audit P1-28).
 const getBarStatus = (status, pct) => {
-  if ((status === 'over_budget' || status === 'przekroczony') || pct >= 100) return { bg: 'bg-red-500', label: 'Przekroczony', color: 'text-red-600' };
+  if (status === 'over_budget' || pct >= 100) return { bg: 'bg-red-500', label: 'Przekroczony', color: 'text-red-600' };
   if (pct >= 80) return { bg: 'bg-amber-500', label: 'Uwaga', color: 'text-amber-600' };
   return { bg: 'bg-gradient-to-r from-[#32a852] to-[#4dd97a]', label: 'OK', color: 'text-[#32a852]' };
 };
@@ -17,31 +25,71 @@ const getBarStatus = (status, pct) => {
 const getSummaryIcon = (status, pct) => {
   const isOver = (status === 'over_budget' || status === 'przekroczony') || pct >= 100;
   if (isOver) return (
-    <div className="w-14 h-14 rounded-xl bg-red-100 flex items-center justify-center">
+    <div className="w-14 h-14 rounded-xl bg-red-100 dark:bg-red-900/30 flex items-center justify-center">
       <svg className="w-7 h-7 text-red-500" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 9v2m0 4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" /></svg>
     </div>
   );
   return (
-    <div className="w-14 h-14 rounded-xl bg-green-100 flex items-center justify-center">
+    <div className="w-14 h-14 rounded-xl bg-green-100 dark:bg-green-900/30 flex items-center justify-center">
       <svg className="w-7 h-7 text-[#32a852]" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z" /></svg>
     </div>
   );
 };
 
-export default function Budzety({ user }) {
+// Pasek postępu animowany: start od 0 przy montowaniu, płynne przejścia między wartościami.
+function AnimatedBar({ pct, className = '' }) {
+  const w = useAnimatedValue(pct);
+  return <div style={{ width: `${w}%` }} className={`transition-all duration-700 ease-out ${className}`} />;
+}
+
+export default function Budzety() {
+  const { success, error: toastError, confirm } = useToast();
   const [budgets, setBudgets] = useState([]);
   const [loading, setLoading] = useState(true);
-  const now = new Date();
-  const [monthStr, setMonthStr] = useState(`${now.getFullYear()}-${String(now.getMonth()+1).padStart(2,'0')}`);
+  const [hasLoaded, setHasLoaded] = useState(false);
+  const [monthStr, setMonthStr] = useState(currentMonthStr());
   const [showModal, setShowModal] = useState(false);
   const [categories, setCategories] = useState([]);
   const [editingBudgets, setEditingBudgets] = useState({});
   const [originalValues, setOriginalValues] = useState({});
   const [savingId, setSavingId] = useState(null);
+  // Audit P1-51: request id guard, so a slow response for an older month cannot overwrite the
+  // month the user has since switched to (same guard as Dashboard / ExpensesView / YearOverview).
+  const reqIdRef = useRef(0);
 
+  // Declared BEFORE the effect that references it in its dependency array: evaluating
+  // [monthStr, loadBudgets] before the const is initialized is a TDZ ReferenceError.
+  const loadBudgets = useCallback(async (mStr) => {
+    const myId = ++reqIdRef.current;
+    setLoading(true);
+    try {
+      const data = await api.getBudgetsViewByMonth(mStr).catch(() => []) ;
+      if (reqIdRef.current !== myId) return;   // a newer month started; drop this response
+      if (data?.length > 0) {
+        const edits = {};
+        const orig = {};
+        data.forEach(b => { const k = 'cat_' + b.cat_id; const n = Number(b.budzet); edits[k] = String(n); orig[k] = n; });
+        setEditingBudgets(edits);
+        setOriginalValues(orig);
+      } else {
+        setEditingBudgets({});
+        setOriginalValues({});
+      }
+      const sorted = (data || []).sort((a, b) => (Number(b.wydatki) || 0) - (Number(a.wydatki) || 0));
+      setBudgets(sorted);
+    } finally {
+      if (reqIdRef.current === myId) {
+        setLoading(false);
+        setHasLoaded(true);
+      }
+    }
+  }, []);
+
+  // Deferred by one microtask: setLoading(true) inside the loader is no longer a synchronous
+  // setState in the effect body (react-hooks/set-state-in-effect, audit P1-31).
   useEffect(() => {
-    loadBudgets(monthStr);
-  }, [monthStr]);
+    Promise.resolve().then(() => loadBudgets(monthStr));
+  }, [monthStr, loadBudgets]);
 
   useEffect(() => {
     let cancelled = false;
@@ -53,27 +101,6 @@ export default function Budzety({ user }) {
     })();
     return () => { cancelled = true; };
   }, []);
-
-  async function loadBudgets(mStr) {
-    setLoading(true);
-    try {
-      const data = await api.getBudgetsViewByMonth(mStr).catch(() => []) ;
-      if (data?.length > 0) {
-        const edits = {};
-        const orig = {};
-        data.forEach(b => { const k = 'cat_' + b.cat_id; edits[k] = Number(b.budzet); orig[k] = Number(b.budzet); });
-        setEditingBudgets(edits);
-        setOriginalValues(orig);
-      } else {
-        setEditingBudgets({});
-        setOriginalValues({});
-      }
-      const sorted = (data || []).sort((a, b) => (Number(b.wydatki) || 0) - (Number(a.wydatki) || 0));
-      setBudgets(sorted);
-    } finally {
-      setLoading(false);
-    }
-  }
 
   const prevMonth = () => {
     const parts = monthStr.split('-').map(Number);
@@ -87,16 +114,20 @@ export default function Budzety({ user }) {
     setMonthStr(`${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}`);
   };
 
-  const currentMonthIndex = parseInt(monthStr.split('-')[1], 10) - 1;
-  const currentYear = monthStr.split('-')[0];
-
   const totalBudget = budgets.reduce((sum, b) => sum + (Number(b.budzet) || 0), 0);
   const totalSpent = budgets.reduce((sum, b) => sum + (Number(b.wydatki) || 0), 0);
   const overallPct = totalBudget > 0 ? Math.min(100, (totalSpent / totalBudget) * 100) : 0;
+  const remaining = totalBudget - totalSpent;
+
+  // Liczby w kartach podsumowania animowane count-upem.
+  const animatedTotalBudget = useCountUp(totalBudget);
+  const animatedTotalSpent = useCountUp(totalSpent);
+  const animatedRemaining = useCountUp(remaining);
 
  const handleSaveInline = async (bud, catKey) => {
-      const amt = editingBudgets[catKey];
-       if (!amt || amt <= 0) return;
+      const amt = parseAmt(editingBudgets[catKey]);
+       if (amt === null) { toastError('Podaj poprawną kwotę'); return; }
+      if (amt < 0) { toastError('Kwota musi być dodatnia'); return; }
       setSavingId(bud.id || bud.cat_id);
      try {
        if (bud.id !== null && bud.id !== undefined) {
@@ -105,46 +136,80 @@ export default function Budzety({ user }) {
          await api.createBudget({ category_id: Number(bud.category_id), amount_monthly: amt, month_year: monthStr });
        }
        await loadBudgets(monthStr);
-     } catch { /* save failed */ } finally {
+       success('Budżet zapisany');
+     } catch (err) {
+       toastError(err.message || 'Nie udało się zapisać budżetu');
+     } finally {
        setSavingId(null);
      }
    };
 
   const hasMissingCategory = categories.some(c => !budgets.find(b => b.category_id === c.id));
 
-  const categoriesLoaded = categories.length > 0;
+  // Audit P1-48: budgets had no delete path at all (route, api function, button). Deleting
+  // removes the budget row only — transactions are untouched.
+  const handleDeleteBudget = async (bud) => {
+    if (bud.id === null || bud.id === undefined) return;
+    const ok = await confirm(
+      `Usuń budżet dla kategorii „${bud.category_name}”? Transakcje pozostaną nienaruszone.`,
+      { title: 'Usuń budżet' },
+    );
+    if (!ok) return;
+    setSavingId(bud.id);
+    try {
+      await api.deleteBudget(bud.id);
+      await loadBudgets(monthStr);
+      success('Budżet usunięty');
+    } catch (err) {
+      toastError(err.message || 'Nie udało się usunąć budżetu');
+    } finally {
+      setSavingId(null);
+    }
+  };
+
+  const dimmed = loading && hasLoaded;
 
   return (
-    <Layout username={user}>
-      {loading ? (
+    <Layout>
+      {loading && !hasLoaded ? (
         <div className="flex items-center justify-center py-16">
-          <div className="w-8 h-8 border-4 border-green-200 border-t-[#32a852] rounded-full animate-spin" />
+          <div className="w-8 h-8 border-4 border-green-200 dark:border-slate-700 border-t-[#32a852] rounded-full animate-spin" />
         </div>
       ) : (
-        <div className="space-y-6">
+        <div key={monthStr} className={`page-enter space-y-6 transition-opacity ${dimmed ? 'opacity-50 pointer-events-none' : ''}`}>
 
           {/* Month Navigation */}
           <div className="flex items-center justify-between">
-            <button onClick={prevMonth} className="p-2 rounded-lg bg-white dark:bg-slate-800 shadow-sm hover:bg-gray-50 dark:hover:bg-slate-700 border border-gray-200 dark:border-slate-700 transition-colors" aria-label="Poprzedni miesiac">
+            <button onClick={prevMonth} className="p-2 rounded-lg bg-white dark:bg-slate-800 shadow-sm hover:bg-gray-50 dark:hover:bg-slate-700 border border-gray-200 dark:border-slate-700 transition-colors" aria-label="poprzedni miesiąc">
               <svg className="w-5 h-5 text-gray-600 dark:text-slate-300" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 19l-7-7 7-7" /></svg>
             </button>
-            <h2 className="text-xl font-bold text-gray-800 dark:text-slate-100">
-              {MONTH_NAMES[currentMonthIndex]} {currentYear}
-            </h2>
-            <button onClick={nextMonth} className="p-2 rounded-lg bg-white dark:bg-slate-800 shadow-sm hover:bg-gray-50 dark:hover:bg-slate-700 border border-gray-200 dark:border-slate-700 transition-colors" aria-label="Nastepny miesiac">
+            <div className="flex items-center gap-3">
+              <h2 className="text-xl font-bold text-gray-800 dark:text-slate-100">
+                {monthLabel(monthStr)}
+              </h2>
+              <button
+                onClick={() => setMonthStr(currentMonthStr())}
+                className={`text-xs font-semibold px-2 py-1 rounded-md transition-colors ${
+                  monthStr === currentMonthStr() ? 'bg-[#32a852]/10 text-[#32a852]' : 'text-[#32a852] hover:bg-[#32a852]/10'
+                }`}
+              >
+                Dziś
+              </button>
+            </div>
+            <button onClick={nextMonth} className="p-2 rounded-lg bg-white dark:bg-slate-800 shadow-sm hover:bg-gray-50 dark:hover:bg-slate-700 border border-gray-200 dark:border-slate-700 transition-colors" aria-label="następny miesiąc">
               <svg className="w-5 h-5 text-gray-600 dark:text-slate-300" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5l7 7-7 7" /></svg>
             </button>
           </div>
 
           {/* Summary Cards */}
-      <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+      <div className="grid grid-cols-1 md:grid-cols-3 gap-4 stagger-children">
             {[
               <div key="overall" className="bg-gradient-to-br from-[#32a852] to-[#1f8c42] rounded-xl shadow-lg p-6 text-white relative overflow-hidden">
                 <div className="absolute top-0 right-0 w-32 h-32 bg-white/10 rounded-full -translate-y-8 translate-x-8" />
                 {getSummaryIcon(overallPct >= 80 ? 'przekroczony' : 'ok')}
                 <div className="relative mt-4">
                   <p className="text-green-100 text-sm font-medium">Całkowity budżet</p>
-                  <p className="text-3xl font-bold mt-1">{totalBudget.toFixed(2)} PLN</p>
+                  <p className="text-3xl font-bold mt-1">{formatMoney(animatedTotalBudget)}</p>
                 </div>
               </div>,
               <div key="spent" className="bg-white dark:bg-slate-800 rounded-xl shadow-sm p-6 border border-gray-100 dark:border-slate-700">
@@ -156,26 +221,26 @@ export default function Budzety({ user }) {
                     <span className="px-2 py-0.5 rounded-full bg-green-100 dark:bg-green-900/30 text-[#32a852] dark:text-green-400 text-xs font-semibold">OK</span>
                   )}
                 </div>
-                <p className="text-3xl font-bold text-gray-800 dark:text-slate-100">{totalSpent.toFixed(2)} PLN</p>
+                <p className="text-3xl font-bold text-gray-800 dark:text-slate-100">{formatMoney(animatedTotalSpent)}</p>
                 {totalBudget > 0 && (
                   <p className="text-sm text-gray-400 dark:text-slate-500 mt-1">{overallPct.toFixed(1)}% wykorzystane</p>
                 )}
               </div>,
               <div key="remaining" className="bg-white dark:bg-slate-800 rounded-xl shadow-sm p-6 border border-gray-100 dark:border-slate-700">
                 <p className="text-sm font-medium text-gray-500 dark:text-slate-400 mb-3">Pozostało</p>
-                {(totalBudget - totalSpent) >= 0 ? (
+                {remaining >= 0 ? (
                   <>
-                    <p className="text-3xl font-bold text-[#32a852] dark:text-green-400">{(totalBudget - totalSpent).toFixed(2)} PLN</p>
+                    <p className="text-3xl font-bold text-[#32a852] dark:text-green-400">{formatMoney(animatedRemaining)}</p>
                     {totalBudget > 0 && (
                       <div className="mt-2 w-full bg-gray-200 dark:bg-slate-700 rounded-full h-2 overflow-hidden">
-                        <div style={{ width: `${Math.max(Math.round(((totalBudget - totalSpent) / totalBudget) * 100), (totalSpent > 0 ? 5 : 0))}%` }} className="bg-[#32a852] dark:bg-green-400 h-2 rounded-full transition-all duration-500" />
+                        <AnimatedBar pct={Math.max(Math.round((remaining / totalBudget) * 100), (totalSpent > 0 ? 5 : 0))} className="bg-[#32a852] dark:bg-green-400 h-2 rounded-full" />
                       </div>
                     )}
                   </>
                 ) : (
                   <>
-                    <p className="text-3xl font-bold text-red-600 dark:text-red-400">-{Math.abs(totalBudget - totalSpent).toFixed(2)} PLN</p>
-                    <p className="text-sm text-red-500 dark:text-red-400 mt-1">Przekroczono budżet o {totalSpent.toFixed(2)} PLN</p>
+                    <p className="text-3xl font-bold text-red-600 dark:text-red-400">{formatMoney(animatedRemaining)}</p>
+                    <p className="text-sm text-red-500 dark:text-red-400 mt-1">Przekroczono budżet o {formatMoney(Math.abs(animatedRemaining))}</p>
                   </>
                 )}
               </div>,
@@ -190,7 +255,7 @@ export default function Budzety({ user }) {
                 <span className={`text-lg font-bold ${overallPct >= 80 ? 'text-red-600 dark:text-red-400' : 'text-[#32a852] dark:text-green-400'}`}>{overallPct.toFixed(1)}%</span>
               </div>
               <div className="w-full bg-gray-200 dark:bg-slate-700 rounded-full h-4 overflow-hidden">
-                <div style={{ width: `${Math.min(100, overallPct)}%` }} className={`h-4 rounded-full transition-all duration-700 ${overallPct >= 80 ? 'bg-gradient-to-r from-red-400 to-red-600' : 'bg-gradient-to-r from-[#32a852] to-[#4dd97a]'}`} />
+                <AnimatedBar pct={Math.min(100, overallPct)} className={`h-4 rounded-full ${overallPct >= 80 ? 'bg-gradient-to-r from-red-400 to-red-600' : 'bg-gradient-to-r from-[#32a852] to-[#4dd97a]'}`} />
               </div>
             </div>
           )}
@@ -241,7 +306,7 @@ export default function Budzety({ user }) {
                       </div>
                       {limit > 0 && (
                         <span className={`text-base font-bold tabular-nums ${remainder >= 0 ? 'text-green-600' : 'text-red-600'}`}>
-                          {remainder >= 0 ? '' : '-'}{Math.abs(remainder).toFixed(2)} PLN
+                          {formatMoney(remainder)}
                         </span>
                       )}
                     </div>
@@ -251,10 +316,10 @@ export default function Budzety({ user }) {
                       {limit > 0 ? (
                         <>
                           <div className="w-full bg-gray-200 dark:bg-slate-700 rounded-full h-3 overflow-hidden">
-                            <div style={{ width: `${Math.max(pct, spent > 0 ? 5 : 0)}%` }} className={`h-3 rounded-full transition-all duration-700 ${statusInfo.bg}`} />
+                            <AnimatedBar pct={Math.max(pct, spent > 0 ? 5 : 0)} className={`h-3 rounded-full ${statusInfo.bg}`} />
                           </div>
                          <div className="flex justify-between mt-2">
-                            <span className="text-xs text-gray-400 dark:text-slate-400 font-medium">{spent.toFixed(2)} PLN wydane</span>
+                            <span className="text-xs text-gray-400 dark:text-slate-400 font-medium">{formatMoney(spent)} wydane</span>
                             <span className="text-xs text-gray-400 dark:text-slate-400 font-medium">{pct >= 100 ? Math.round(pct) + '%' : pct.toFixed(1) + '%'}</span>
                           </div>
                         </>
@@ -274,17 +339,17 @@ export default function Budzety({ user }) {
                               inputMode="numeric"
                               pattern="[0-9]*"
                               value={editingBudgets['cat_' + bud.cat_id] ?? ''}
-                              onChange={(e) => { const v = e.target.value.replace(/[^0-9.]/g, ''); setEditingBudgets(prev => ({ ...prev, ['cat_' + bud.cat_id]: parseFloat(v || '') })) }}
+                              onChange={(e) => { const v = e.target.value.replace(/[^0-9.]/g, ''); setEditingBudgets(prev => ({ ...prev, ['cat_' + bud.cat_id]: v })) }}
                              onKeyDown={(e) => { if (e.key === 'Enter') handleSaveInline(bud, 'cat_' + bud.cat_id); }}
                                                         className="w-28 px-3 py-1.5 bg-gray-50 dark:bg-slate-700 border border-gray-200 dark:border-slate-600 rounded-lg text-sm font-semibold text-gray-700 dark:text-slate-200 outline-none focus:border-[#32a852] focus:ring-1 focus:ring-green-100 dark:focus:ring-green-900/30 transition-all tabular-nums"
                                                         />
                                                        <span className="text-xs text-gray-400 dark:text-slate-400">PLN</span>
-                                               {editingBudgets['cat_' + bud.cat_id] !== originalValues['cat_' + bud.cat_id] && (
+                                               {parseAmt(editingBudgets['cat_' + bud.cat_id]) !== originalValues['cat_' + bud.cat_id] && (
                                                 <>
                                                   <button onClick={() => handleSaveInline(bud, 'cat_' + bud.cat_id)} disabled={savingId === (bud.id || bud.cat_id)} className="px-3 py-1.5 rounded-lg text-xs font-semibold bg-[#32a852] hover:bg-[#1f8c42] dark:bg-green-600 dark:hover:bg-green-700 text-white transition-colors shadow-sm disabled:opacity-50">
                                                     {savingId === (bud.id || bud.cat_id) ? 'Zapisuję…' : 'Zapisz'}
                                                   </button>
-                                                  <button onClick={() => setEditingBudgets(prev => ({ ...prev, ['cat_' + bud.cat_id]: originalValues['cat_' + bud.cat_id] }))} className="px-3 py-1.5 rounded-lg text-xs font-semibold bg-gray-200 hover:bg-gray-300 dark:bg-slate-700 dark:hover:bg-slate-600 text-gray-600 dark:text-slate-300 transition-colors">
+                                                  <button onClick={() => setEditingBudgets(prev => ({ ...prev, ['cat_' + bud.cat_id]: String(originalValues['cat_' + bud.cat_id]) }))} className="px-3 py-1.5 rounded-lg text-xs font-semibold bg-gray-200 hover:bg-gray-300 dark:bg-slate-700 dark:hover:bg-slate-600 text-gray-600 dark:text-slate-300 transition-colors">
                                                     Anuluj
                                                   </button>
             </>
@@ -293,6 +358,19 @@ export default function Budzety({ user }) {
                       ) : (
                         <button onClick={() => setShowModal(true)}                          className="mt-3 px-4 py-2 rounded-lg text-xs font-semibold bg-gray-100 dark:bg-slate-700 hover:bg-gray-200 dark:hover:bg-slate-600 text-gray-600 dark:text-slate-300 transition-colors border-dashed border-gray-300 dark:border-slate-600">
                           Ustaw budżet dla tej kategorii
+                        </button>
+                      )}
+                      {/* Sibling of the ternary: a budget row with limit 0 exists and must be
+                          deletable too (setting it to 0 is not the same as removing it). */}
+                      {bud.id !== null && bud.id !== undefined && (
+                        <button
+                          onClick={() => handleDeleteBudget(bud)}
+                          disabled={savingId === bud.id}
+                          className="mt-3 p-2 rounded-lg text-xs font-semibold text-red-600 dark:text-red-400 bg-red-50 dark:bg-red-900/20 hover:bg-red-100 dark:hover:bg-red-900/40 transition-colors disabled:opacity-50"
+                          aria-label={`Usuń budżet dla kategorii ${bud.category_name}`}
+                          title="Usuń budżet"
+                        >
+                          <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" /></svg>
                         </button>
                       )}
                     </div>
@@ -307,7 +385,6 @@ export default function Budzety({ user }) {
             <AddBudgetModal
               monthStr={monthStr}
               categories={categories.filter(c => !budgets.find(b => b.category_id === c.id))}
-              categoriesLoaded={categoriesLoaded}
               onClose={() => setShowModal(false)}
               onAdded={() => loadBudgets(monthStr)}
             />

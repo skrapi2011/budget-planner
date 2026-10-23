@@ -1,15 +1,16 @@
 import { useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import * as api from '../api';
+import { useAuth } from '../AuthContext';
 
 export default function RegisterPage() {
   const navigate = useNavigate();
+  const { adoptSession } = useAuth();
   const [username, setUsername] = useState('');
   const [password, setPassword] = useState('');
   const [confirmPassword, setConfirmPassword] = useState('');
   const [error, setError] = useState('');
   const [loading, setLoading] = useState(false);
-  const [success, setSuccess] = useState(false);
 
   const handleSubmit = async (e) => {
     e.preventDefault();
@@ -22,34 +23,17 @@ export default function RegisterPage() {
 
     setLoading(true);
     try {
+      // api.register() already stores the token — adopt it and go straight
+      // to the dashboard instead of forcing a second login.
       await api.register(username, password, confirmPassword);
-      setSuccess(true);
+      adoptSession();
+      navigate('/dashboard', { replace: true });
     } catch (err) {
       setError(err.message || 'Rejestracja się nie powiodła.');
     } finally {
       setLoading(false);
     }
   };
-
-  if (success) {
-    return (
-      <div className="min-h-screen flex items-center justify-center bg-gradient-to-br from-green-50 to-emerald-100 dark:from-slate-900 dark:to-slate-800">
-        <div className="w-full max-w-sm p-8 m-auto bg-white rounded-lg shadow-md text-center dark:bg-slate-800 dark:border dark:border-slate-700">
-          <svg className="mx-auto mb-4 w-16 h-16 text-[#32a852]" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z"/></svg>
-
-          <h1 className="text-xl font-bold text-gray-900 mb-2 dark:text-white">Rejestracja udana!</h1>
-          <p className="text-sm text-gray-600 mb-4 dark:text-slate-300">Twoje konto zostało utworzone pomyślnie.</p>
-          
-          <button 
-            onClick={() => navigate('/login')} 
-            className="w-full px-4 py-2 text-sm font-medium rounded-md shadow-sm text-white bg-[#32a852] hover:bg-[#1f8c42] transition-colors"
-          >
-            Przejdź do logowania
-          </button>
-        </div>
-      </div>
-    ); 
-  }
 
   return (
     <div className="min-h-screen flex items-center justify-center bg-gradient-to-br from-green-50 to-emerald-100 dark:from-slate-900 dark:to-slate-800">

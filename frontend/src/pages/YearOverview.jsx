@@ -1,43 +1,72 @@
 import { useState, useEffect } from 'react';
+import { useNavigate } from 'react-router-dom';
 import Layout from '../components/Layout';
 import * as api from '../api';
 import { LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, Legend } from 'recharts';
+import { currentYear, currentMonthStr } from '../utils/date';
+import { formatMoney } from '../utils/money';
+import { useAnimatedValue, useCountUp } from '../hooks/animation';
 
 const GREEN = '#32a852';
 const BLUE_LINE = 'rgba(59, 130, 246, 0.6)';
 
-function getCurrentYear() {
-  return new Date().getFullYear();
+// Pasek animowany: start od 0 przy montowaniu, płynne przejścia między wartościami.
+function AnimatedBar({ pct, color, className = '' }) {
+  const w = useAnimatedValue(pct);
+  return (
+    <div
+      className={`h-full rounded-full transition-all duration-700 ease-out ${className}`}
+      style={{ width: `${w}%`, backgroundColor: color }}
+    />
+  );
 }
 
-export default function YearOverview({ user }) {
+export default function YearOverview() {
+  const navigate = useNavigate();
   const [loading, setLoading] = useState(true);
-  const [year, setYear] = useState(getCurrentYear());
+  const [hasLoaded, setHasLoaded] = useState(false);
+  const [year, setYear] = useState(currentYear());
   const [data, setData] = useState(null);
 
-  async function loadYear() {
-    setLoading(true);
-    try {
-      const res = await api.getYearSummary(String(year));
-      setData(res || null);
-    } catch (e) {
-      console.error('load year data error', e);
-      setData(null);
-    } finally {
-      setLoading(false);
-    }
-  }
-
-  useEffect(() => { loadYear(); }, [year]);
+  // Fetch in an async IIFE so no setState runs synchronously in the effect body
+  // (audit P1-31: react-hooks/set-state-in-effect). `cancelled` guards against a
+  // slow response for an older year overwriting the current one.
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      setLoading(true);
+      try {
+        const res = await api.getYearSummary(String(year));
+        if (!cancelled) setData(res || null);
+      } catch (e) {
+        console.error('load year data error', e);
+        if (!cancelled) setData(null);
+      }
+      if (!cancelled) {
+        setLoading(false);
+        setHasLoaded(true);
+      }
+    })();
+    return () => { cancelled = true; };
+  }, [year]);
 
   function prevYear() { setYear(y => y - 1); }
-  function nextYear() { setYear(y => y + 1); }
+  function nextYear() { if (year < currentYear()) setYear(y => y + 1); }
 
-  if (loading || !data) {
+  const isCurrentYear = year === currentYear();
+  // Deep link target for a category row: the last month of the viewed year
+  // (the current month while viewing this year, December for a past year).
+  const deepMonth = isCurrentYear ? currentMonthStr() : `${year}-12`;
+
+  if (!data) {
     return (
-      <Layout username={user}>
+      <Layout>
         <div className="flex items-center justify-center py-24">
-          <div className="w-10 h-10 border-4 border-gray-200 border-t-[#32a852] rounded-full animate-spin" />
+          {hasLoaded ? (
+            <p className="text-gray-500 dark:text-slate-400">Nie udało się załadować danych. Spróbuj ponownie.</p>
+          ) : (
+            <div className="w-10 h-10 border-4 border-gray-200 dark:border-slate-700 border-t-[#32a852] rounded-full animate-spin" />
+          )}
         </div>
       </Layout>
     );
@@ -57,21 +86,34 @@ export default function YearOverview({ user }) {
     budget: m.budget > 0 ? m.budget : null,
   }));
 
+  const dimmed = loading && hasLoaded;
+
   return (
-    <Layout username={user}>
+    <Layout>
+      <div key={year} className={`page-enter transition-opacity ${dimmed ? 'opacity-50 pointer-events-none' : ''}`}>
       {/* Year Navigation */}
       <div className="flex items-center justify-between mb-8">
-        <button onClick={prevYear} className="p-2 rounded-lg bg-white dark:bg-slate-800 shadow-sm hover:bg-gray-50 dark:hover:bg-slate-700 transition-colors text-gray-600 dark:text-slate-300 border border-gray-200 dark:border-slate-700">
+        <button onClick={prevYear} aria-label="poprzedni rok" className="p-2 rounded-lg bg-white dark:bg-slate-800 shadow-sm hover:bg-gray-50 dark:hover:bg-slate-700 transition-colors text-gray-600 dark:text-slate-300 border border-gray-200 dark:border-slate-700">
           <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 19l-7-7 7-7" /></svg>
         </button>
-        <h2 className="text-xl font-bold text-gray-800 dark:text-slate-200">Roczny Przegląd - {year}</h2>
-        <button onClick={nextYear} className="p-2 rounded-lg bg-white dark:bg-slate-800 shadow-sm hover:bg-gray-50 dark:hover:bg-slate-700 transition-colors text-gray-600 dark:text-slate-300 border border-gray-200 dark:border-slate-700">
+        <div className="flex items-center gap-3">
+          <h2 className="text-xl font-bold text-gray-800 dark:text-slate-200">Roczny Przegląd - {year}</h2>
+          <button
+            onClick={() => setYear(currentYear())}
+            className={`text-xs font-semibold px-2 py-1 rounded-md transition-colors ${
+              isCurrentYear ? 'bg-[#32a852]/10 text-[#32a852]' : 'text-[#32a852] hover:bg-[#32a852]/10'
+            }`}
+          >
+            Ten rok
+          </button>
+        </div>
+        <button onClick={nextYear} aria-label="następny rok" disabled={year >= currentYear()} className="p-2 rounded-lg bg-white dark:bg-slate-800 shadow-sm hover:bg-gray-50 dark:hover:bg-slate-700 transition-colors text-gray-600 dark:text-slate-300 border border-gray-200 dark:border-slate-700 disabled:opacity-40 disabled:cursor-not-allowed" title={year >= currentYear() ? 'Nie można przejść do lat przyszłych' : undefined}>
           <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5l7 7-7 7" /></svg>
         </button>
       </div>
 
       {/* Summary Cards */}
-      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-6 mb-8">
+      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-6 mb-8 stagger-children">
         <SummaryCard label="Roczne wydatki" value={total_spending} color="#ef4444" />
         <SummaryCard label="Roczny budżet" value={total_budgeted} color="#f59e0b" />
         <SummaryCard label="Saldo roczne" value={variance} color={variance >= 0 ? GREEN : '#ef4444'} />
@@ -109,56 +151,42 @@ export default function YearOverview({ user }) {
           <div>
             {(() => {
               const noBudget = total_budgeted <= 0;
+              const saved = variance > 0;
               return (
                 <>
                   <h4 className="text-sm font-semibold text-gray-700 dark:text-slate-300 mb-2">Saldo budżetu rocznego</h4>
 
-                   {!noBudget && variance > 0 ? (
-                    <div className="flex items-end justify-between mb-1">
-                      <p className={`text-lg font-bold ${variance >= 0 ? 'text-[#32a852]' : 'text-red-600'}`}>
-                        {formatMoney(Math.abs(variance))}
-                      </p>
+                  <div className="flex items-end justify-between mb-1">
+                    <p className={`text-lg font-bold ${variance >= 0 ? 'text-[#32a852]' : 'text-red-600'}`}>
+                      {formatMoney(Math.abs(variance))}
+                    </p>
+                    {!noBudget ? (
                       <div className="flex flex-col items-end">
                         <span className="text-xs font-bold text-gray-700 dark:text-slate-300">{((variance / total_budgeted) * 100).toFixed(1)}%</span>
-                        <span className="text-[10px] font-medium text-[#32a852] dark:text-green-400">Zaoszczędzone</span>
+                        <span className={`text-[10px] font-medium ${saved ? 'text-[#32a852] dark:text-green-400' : 'text-red-600 dark:text-red-400'}`}>
+                          {saved ? 'Zaoszczędzone' : 'Przekroczenie'}
+                        </span>
                       </div>
-                    </div>
-                  ) : !noBudget && variance <= 0 ? (
-                    <div className="flex items-end justify-between mb-1">
-                      <p className={`text-lg font-bold ${variance >= 0 ? 'text-[#32a852]' : 'text-red-600'}`}>
-                        {formatMoney(Math.abs(variance))}
-                      </p>
-                      <div className="flex flex-col items-end">
-                        <span className="text-xs font-bold text-gray-700 dark:text-slate-300">{((variance / total_budgeted) * 100).toFixed(1)}%</span>
-                        <span className="text-[10px] font-medium text-red-600 dark:text-red-400">Przekroczenie</span>
-                      </div>
-                    </div>
-                  ) : (
-                    <>
-                      <p className={`text-lg font-bold ${variance >= 0 ? 'text-[#32a852]' : 'text-red-600'}`}>
-                        {formatMoney(Math.abs(variance))}
-                      </p>
-                      {total_spending > 0 && (
+                    ) : (
+                      total_spending > 0 && (
                         <p className="text-xs text-gray-500 dark:text-slate-500 mt-1">Nie ustawiono żadnych budżetów na ten rok</p>
-                      )}
-                    </>
-                  )}
+                      )
+                    )}
+                  </div>
 
-                  {noBudget ? null : total_spending > 0 ? (
+                  {/* Bar only when there is a budget to compare against (the old
+                      `total_spending > 0 ? … : total_spending > 0 ? …` chain had an
+                      unreachable second branch). */}
+                  {!noBudget && total_spending > 0 && (
                     <>
                       <div className="w-full h-4 bg-gray-200 dark:bg-slate-700 rounded-full overflow-hidden mt-1.5 mb-1">
-                        <div
-                          className="h-full transition-all duration-500 rounded-full"
-                          style={{ width: `${Math.min(100, pctUsed)}%`, backgroundColor: variance >= 0 ? GREEN : '#ef4444' }}
-                        />
+                        <AnimatedBar pct={Math.min(100, pctUsed)} color={variance >= 0 ? GREEN : '#ef4444'} />
                       </div>
                       <p className="text-right text-xs text-gray-400 dark:text-slate-500">
                         {formatMoney(total_spending)} / {formatMoney(total_budgeted)} ({pctUsed.toFixed(1)}%)
                       </p>
                     </>
-                  ) : total_spending > 0 ? (
-                    <p className="text-xs text-gray-400 dark:text-slate-600 mt-1">Brak danych</p>
-                  ) : null}
+                  )}
                 </>
               );
             })()}
@@ -170,33 +198,48 @@ export default function YearOverview({ user }) {
             {!category_variance || category_variance.length === 0 ? (
               <p className="text-center text-gray-400 dark:text-slate-500 py-6">Brak danych.</p>
             ) : (() => {
-              const maxRatio = Math.max(...category_variance.map(cv=>cv.budget > 0 ? cv.spending/cv.budget : (cv.spending > 0 ? 2 : 0)));
-              const scaleMax = Math.min(maxRatio * 1.25, 2);
+              // Backend key is `budgeted` (not `budget`) — reading cv.budget gave
+              // undefined, so every bar collapsed to the same 90% and no numbers rendered.
+              const maxRatio = Math.max(...category_variance.map(cv => cv.budgeted > 0 ? cv.spending / cv.budgeted : (cv.spending > 0 ? 2 : 0)));
+              // Same month for every category with a budget and no spending -> maxRatio = 0
+              // -> ratio/scaleMax = 0/0 = NaN -> style width:'NaN%' (audit P0-17).
+              const scaleMax = Math.max(Math.min(maxRatio * 1.25, 2), 1);
               return (
-                <div style={{ maxHeight: '180px', overflowY: 'auto' }}>
+                <div style={{ maxHeight: '220px', overflowY: 'auto' }} className="custom-scrollbar">
                   {category_variance.map((cv, idx) => {
-                    const ratio = cv.budget > 0 ? (cv.spending / cv.budget) : (cv.spending > 0 ? scaleMax*0.9 : 0);
-                    const barPct = Math.max(5, (ratio / scaleMax) * 100);
+                    const ratio = cv.budgeted > 0 ? (cv.spending / cv.budgeted) : (cv.spending > 0 ? scaleMax * 0.9 : 0);
+                    const barPct = Number.isFinite(ratio / scaleMax) ? Math.max(5, (ratio / scaleMax) * 100) : 5;
                     return (
-                      <div key={idx} className="mb-3 last:mb-0">
+                      <div
+                        key={idx}
+                        role="button"
+                        tabIndex={0}
+                        title="Zobacz transakcje tej kategorii"
+                        onClick={() => navigate(`/wydatki?kategoria=${cv.cid}&miesiac=${deepMonth}`)}
+                        onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') navigate(`/wydatki?kategoria=${cv.cid}&miesiac=${deepMonth}`); }}
+                        className="mb-3 last:mb-0 cursor-pointer rounded-lg px-1 -mx-1 hover:bg-gray-50 dark:hover:bg-slate-700/50 transition-colors"
+                      >
                         <div className="flex items-center justify-between mb-2">
-                          <span className="text-sm text-gray-700 dark:text-slate-300">{cv.name}</span>
-                          {cv.budget > 0 && cv.spending > 0 && (
+                          <span className="text-sm text-gray-700 dark:text-slate-300 flex items-center gap-2">
+                            <span className="inline-block w-2.5 h-2.5 rounded-full flex-shrink-0" style={{ backgroundColor: cv.color }} />
+                            {cv.name}
+                          </span>
+                          {cv.budgeted > 0 && cv.spending > 0 && (
                             <span className="text-xs font-semibold text-gray-400 dark:text-slate-500">
-                              {((cv.spending / cv.budget) * 100).toFixed(0)}% budżetu
+                              {((cv.spending / cv.budgeted) * 100).toFixed(0)}% budżetu
                             </span>
                           )}
-                          {cv.budget > 0 && (
+                          {cv.budgeted > 0 && (
                             <div className="flex items-center gap-2 text-xs">
-                              <span className={`font-medium ${(cv.variance >= 0 ? 'text-green-600' : 'text-red-600')}`}>
+                              <span className={`font-medium ${cv.variance >= 0 ? 'text-green-600 dark:text-green-400' : 'text-red-600 dark:text-red-400'}`}>
                                 {formatMoney(cv.variance)}
                               </span>
-                              <span className="text-gray-400 dark:text-slate-500">{formatMoney(cv.spending)}</span>
+                              <span className="text-gray-400 dark:text-slate-500">{formatMoney(cv.spending)} / {formatMoney(cv.budgeted)}</span>
                             </div>
                           )}
                         </div>
                         <div className="w-full h-2 bg-gray-200 dark:bg-slate-700 rounded-full overflow-hidden">
-                          <div className="h-full rounded-full transition-all duration-500" style={{ width: `${Math.min(100, barPct)}%`, backgroundColor: cv.variance >= 0 ? GREEN : '#ef4444' }} />
+                          <AnimatedBar pct={Math.min(100, barPct)} color={cv.variance >= 0 ? GREEN : '#ef4444'} />
                         </div>
                       </div>
                     );
@@ -212,7 +255,7 @@ export default function YearOverview({ user }) {
       <div className="bg-white dark:bg-slate-800 rounded-xl shadow-sm p-5 hover:shadow-md transition-shadow">
         <h3 className="text-base font-bold mb-4 text-gray-800 dark:text-slate-200">Miesięczne porównanie</h3>
         {!monthly_summary || monthly_summary.length === 0 ? (
-          <p className="text-center text-gray-400 dark:text-blue-slate-500 py-8">Brak danych.</p>
+          <p className="text-center text-gray-400 dark:text-slate-500 py-8">Brak danych.</p>
         ) : (
           <div className="overflow-x-auto">
             <table className="w-full text-sm">
@@ -226,47 +269,52 @@ export default function YearOverview({ user }) {
                 </tr>
               </thead>
               <tbody>
-                {monthly_summary.map((m, idx) => (
-                  <tr key={idx} className="border-b border-gray-100 dark:border-slate-700 hover:bg-gray-50 dark:hover:bg-slate-700/50 transition-colors">
+                {monthly_summary.map((m, idx) => {
+                  const monthKey = `${year}-${String(m.month).padStart(2, '0')}`;
+                  return (
+                  <tr
+                    key={idx}
+                    onClick={() => navigate(`/wydatki?miesiac=${monthKey}`)}
+                    title={`Zobacz transakcje: ${m.label}`}
+                    className="border-b border-gray-100 dark:border-slate-700 hover:bg-gray-50 dark:hover:bg-slate-700/50 transition-colors cursor-pointer"
+                  >
                     <td className="py-3 px-4 font-medium text-gray-800 dark:text-slate-200">{m.label}</td>
                     <td className={`py-3 px-4 text-right ${m.budget === 0 ? 'text-gray-400 dark:text-slate-600' : 'text-gray-600 dark:text-slate-400'}`}>
                       {formatMoney(m.budget)}
                     </td>
                     <td className="py-3 px-4 text-right font-medium text-red-600 dark:text-red-400">{formatMoney(m.spending)}</td>
-                    <td className={`py-3 px-4 text-right font-bold ${m.balance >= 0 ? 'text-green-600' : 'text-red-600'}`}>{formatMoney(m.balance)}</td>
+                    <td className={`py-3 px-4 text-right font-bold ${m.balance >= 0 ? 'text-green-600 dark:text-green-400' : 'text-red-600 dark:text-red-400'}`}>{formatMoney(m.balance)}</td>
                     <td className="py-3 px-4 text-center">
-                      <span className={`inline-flex items-center px-2 py-0.5 rounded-full text-xs font-semibold ${m.on_budget ? (variance >= 0 ? 'bg-green-100 dark:bg-green-900/30 text-green-700 dark:text-green-400' : 'bg-gray-100 dark:bg-slate-700 text-gray-500 dark:text-slate-400') : 'bg-red-100 dark:bg-red-900/30 text-red-700 dark:text-red-400'}`}>
+                      {/* Badge is per month: the old code coloured the OK badge with the
+                          YEAR variance, so a good month looked grey in an over-budget year. */}
+                      <span className={`inline-flex items-center px-2 py-0.5 rounded-full text-xs font-semibold ${m.on_budget ? (m.balance >= 0 ? 'bg-green-100 dark:bg-green-900/30 text-green-700 dark:text-green-400' : 'bg-gray-100 dark:bg-slate-700 text-gray-500 dark:text-slate-400') : 'bg-red-100 dark:bg-red-900/30 text-red-700 dark:text-red-400'}`}>
                         {m.on_budget ? 'OK' : 'Nadbudżet'}
                       </span>
                     </td>
                   </tr>
-                ))}
+                  );
+                })}
               </tbody>
             </table>
           </div>
         )}
       </div>
 
+      </div>
     </Layout>
   );
 }
 
 function SummaryCard({ label, value, color = GREEN }) {
+  const animated = useCountUp(value);
   return (
     <div className="bg-white dark:bg-slate-800 rounded-xl shadow-sm hover:shadow-md transition-shadow p-5 relative overflow-hidden">
       <p className="text-sm font-medium text-gray-600 dark:text-slate-400 mb-2">{label}</p>
       <p className={`text-2xl font-bold`} style={{ color }}>
-        {typeof value === 'string' && value.endsWith('%') ? value : typeof value !== 'string' && (value == null || isNaN(parseFloat(value))) ? String(value) : formatMoney(value)}
+        {typeof value === 'string' && value.endsWith('%') ? animated : typeof value !== 'string' && (value == null || isNaN(parseFloat(value))) ? String(value) : formatMoney(animated)}
       </p>
     </div>
   );
-}
-
-function formatMoney(v) {
-  if (typeof v === 'string' && v.endsWith('zł')) return v;
-  const num = Number(v);
-  if (isNaN(num)) return String(v);
-  return `${num.toLocaleString('pl-PL', { minimumFractionDigits: 2, maximumFractionDigits: 2 })} zł`;
 }
 
 function CustomBarTooltip({ active, payload }) {
