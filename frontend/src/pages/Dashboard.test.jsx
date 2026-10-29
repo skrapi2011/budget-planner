@@ -82,11 +82,13 @@ beforeEach(() => {
 });
 
 describe('loading', () => {
-  it('shows a spinner until the dashboard data arrives', () => {
-    renderDashboard();
+  it('shows skeleton placeholders until the dashboard data arrives', () => {
+    const { container } = renderDashboard();
     // No stat card labels yet — the page returns early on !dashData.
     expect(screen.queryByText('Budżet miesięczny')).toBeNull();
-    expect(document.querySelector('.animate-spin')).toBeInTheDocument();
+    // The placeholder mirrors the loaded layout: stat cards, charts, a category list.
+    expect(container.querySelectorAll('.skeleton').length).toBeGreaterThan(0);
+    expect(screen.getAllByRole('status').length).toBeGreaterThan(0);
   });
 
   it('requests the current month by default', async () => {
@@ -100,10 +102,13 @@ describe('loading', () => {
 
   it('survives a failed dashboard request without crashing', async () => {
     api.getDashboardData.mockResolvedValue(null);
-    renderDashboard();
+    const { container } = renderDashboard();
     await new Promise(r => setTimeout(r, 20));
     expect(screen.queryByText('Budżet miesięczny')).toBeNull();
-    expect(document.querySelector('.animate-spin')).toBeInTheDocument();
+    // The skeleton block is what stays on screen for the null-data state (as with the
+    // old spinner); the shimmer bars stay hidden from assistive tech.
+    expect(container.querySelectorAll('.skeleton').length).toBeGreaterThan(0);
+    expect(screen.getAllByRole('status').length).toBeGreaterThan(0);
   });
 
   it('falls back to empty budgets and categories when those calls fail', async () => {

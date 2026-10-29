@@ -51,6 +51,14 @@ describe('loading', () => {
     expect(api.getBudgetsViewByMonth).toHaveBeenCalledWith(currentMonthStr());
   });
 
+  it('shows skeleton placeholders before the first load', async () => {
+    const { container } = renderWithProviders(<Budgets />);
+    expect(container.querySelectorAll('.skeleton').length).toBeGreaterThan(0);
+    expect(screen.getAllByRole('status').length).toBeGreaterThan(0);
+    await screen.findByText('Transport');
+    expect(container.querySelector('.skeleton')).toBeNull();
+  });
+
   it('shows the Polish month heading', async () => {
     await renderAndLoad();
     expect(monthHeading()).toHaveTextContent(monthLabel(currentMonthStr()));

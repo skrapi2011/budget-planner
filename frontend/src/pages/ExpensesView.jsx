@@ -2,6 +2,7 @@ import { useState, useEffect, useCallback, useRef } from 'react';
 import { useSearchParams } from 'react-router-dom';
 import Layout from '../components/Layout';
 import AddExpenseModal from '../components/AddExpenseModal';
+import { ListSkeleton, SkeletonGrid, StatTileSkeleton } from '../components/Skeleton';
 import { currentMonthStr, monthLabel } from '../utils/date';
 import { formatMoney } from '../utils/money';
 import * as api from '../api';
@@ -215,8 +216,12 @@ import { useToast } from '../components/ToastContext';
       </div>
 
       {loading && !hasLoaded ? (
-        <div className="flex items-center justify-center py-16">
-          <div className="w-8 h-8 border-4 border-[#32a852]20 border-t-[#32a852] rounded-full animate-spin" />
+        // First load: the summary strip becomes 4 tiles, the list becomes rows.
+        <div className="space-y-4">
+          <SkeletonGrid count={4} cols="lg:grid-cols-4">
+            <StatTileSkeleton />
+          </SkeletonGrid>
+          <ListSkeleton count={6} />
         </div>
       ) : (
         <>

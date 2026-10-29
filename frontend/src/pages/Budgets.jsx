@@ -2,6 +2,11 @@ import { useState, useEffect, useCallback, useRef } from 'react';
 import Layout from '../components/Layout';
 import * as api from '../api';
 import AddBudgetModal from '../components/AddBudgetModal';
+import {
+  CardSkeleton,
+  SKELETON_SURFACE,
+  SkeletonGrid,
+} from '../components/Skeleton';
 import { currentMonthStr, monthLabel } from '../utils/date';
 import { formatMoney } from '../utils/money';
 import { useAnimatedValue, useCountUp } from '../hooks/animation';
@@ -172,8 +177,26 @@ export default function Budzety() {
   return (
     <Layout>
       {loading && !hasLoaded ? (
-        <div className="flex items-center justify-center py-16">
-          <div className="w-8 h-8 border-4 border-green-200 dark:border-slate-700 border-t-[#32a852] rounded-full animate-spin" />
+        // First load: header plate + 3 summary cards + a 2-col grid of budget cards,
+        // matching the loaded layout so nothing jumps when data arrives.
+        <div className="space-y-6">
+          <div className="flex items-center justify-between">
+            <div className={`${SKELETON_SURFACE} rounded-lg p-4 w-12`} aria-hidden="true">
+              <div className="skeleton h-5 w-5" />
+            </div>
+            <div className={`${SKELETON_SURFACE} rounded-lg p-4 w-40`} aria-hidden="true">
+              <div className="skeleton h-5 w-full" />
+            </div>
+            <div className={`${SKELETON_SURFACE} rounded-lg p-4 w-12`} aria-hidden="true">
+              <div className="skeleton h-5 w-5" />
+            </div>
+          </div>
+          <SkeletonGrid count={3} cols="md:grid-cols-3">
+            <CardSkeleton />
+          </SkeletonGrid>
+          <SkeletonGrid count={4} cols="lg:grid-cols-2">
+            <CardSkeleton />
+          </SkeletonGrid>
         </div>
       ) : (
         <div key={monthStr} className={`page-enter space-y-6 transition-opacity ${dimmed ? 'opacity-50 pointer-events-none' : ''}`}>

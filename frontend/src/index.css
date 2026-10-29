@@ -150,6 +150,10 @@ a[href],
   from { opacity: 0; }
   to   { opacity: 1; }
 }
+@keyframes shimmer {
+  0%   { background-position: -200% 0; }
+  100% { background-position: 200% 0; }
+}
 
 .page-enter       { animation: fade-slide-in 0.3s ease-out both; }
 .toast-enter      { animation: toast-in 0.25s ease-out both; }
@@ -166,11 +170,34 @@ a[href],
 .stagger-children > *:nth-child(5) { animation-delay: 240ms; }
 .stagger-children > *:nth-child(6) { animation-delay: 300ms; }
 
+/* Loading placeholders (components/Skeleton.jsx). The class carries the sweeping
+   gradient; the component supplies the surface (bg + border + dark: variants). */
+.skeleton {
+  background: linear-gradient(90deg, #e5e7eb 25%, #f3f4f6 50%, #e5e7eb 75%);
+  background-size: 200% 100%;
+  animation: shimmer 1.5s ease-in-out infinite;
+  border-radius: 6px;
+}
+
+.dark .skeleton {
+  background: linear-gradient(90deg, #1e293b 25%, #334155 50%, #1e293b 75%);
+  background-size: 200% 100%;
+}
+
 @media (prefers-reduced-motion: reduce) {
   .page-enter, .toast-enter, .toast-exit, .modal-panel-in, .backdrop-in,
   .stagger-children > *,
   .theme-icon-swap {
     animation: none;
+  }
+  /* A skeleton that only shimmers is noise; keep it as a flat grey plate so the
+     layout still reads as "content is coming". */
+  .skeleton {
+    animation: none;
+    background: #e5e7eb;
+  }
+  .dark .skeleton {
+    background: #1e293b;
   }
   /* ThemeProvider also skips startViewTransition here — these are the belt-braces. */
   ::view-transition-group(root),

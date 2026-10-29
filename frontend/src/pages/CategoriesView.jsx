@@ -1,6 +1,7 @@
 import { useState, useEffect } from 'react';
 import Layout from '../components/Layout';
 import { useToast } from '../components/ToastContext';
+import { ListSkeleton, SKELETON_SURFACE } from '../components/Skeleton';
 import * as api from '../api';
 
 // Spread, nie split(''): split tnie pary surrogate i daje 28 polow glifow zamiast 14 emoji.
@@ -84,8 +85,17 @@ export default function CategoriesView() {
       </div>
 
       {loading && (
-        <div className="flex items-center justify-center py-16">
-          <div className="w-8 h-8 border-4 border-[#32a852]20 border-t-[#32a852] rounded-full animate-spin" />
+        // First paint: the category list becomes rows; the add/edit panel becomes a plate.
+        <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
+          <div className="lg:col-span-1 space-y-4">
+            <div className={`${SKELETON_SURFACE} rounded-lg p-5`} aria-hidden="true">
+              <div className="skeleton h-5 w-32 mb-4" />
+              <div className="skeleton h-9 w-full mb-3" />
+              <div className="skeleton h-9 w-full mb-3" />
+              <div className="skeleton h-9 w-24" />
+            </div>
+          </div>
+          <ListSkeleton count={8} className="lg:col-span-2 lg:col-start-2" />
         </div>
       )}
 
