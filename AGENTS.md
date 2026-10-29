@@ -18,7 +18,7 @@ applications in one monorepo:
 | `frontend/` | React 19, Vite 8, Tailwind CSS 4, recharts 3, react-router-dom 7 | **5173** (dev) | SPA |
 
 Multi-user: every user gets their own categories, budgets and transactions. Auth is
-stateless JWT (HS256, 24 h expiry). There **is** a test suite (314 backend + 347 frontend),
+stateless JWT (HS256, 24 h expiry). There **is** a test suite (315 backend + 370 frontend),
 **a CI pipeline** (`.github/workflows/ci.yml`, gating PRs and pushes to `main`) and
 **`backend/requirements.txt`** — see §8 for how changes are verified.
 
@@ -62,6 +62,7 @@ budget-planner/
         │   ├── AddBudgetModal.jsx
         │   ├── ToastContext.js← useToast() hook + context (NO component — see §7.5)
         │   ├── ToastProvider.jsx ← toast/confirm UI, wraps <AppRoutes/> in App.jsx
+        │   ├── Skeleton.jsx   ← first-load placeholders (see §7.5); no context, pure presentational
         │   └── SessionExpiredToast.jsx
         ├── hooks/
         │   └── animation.js   ← useAnimatedValue() / useCountUp()
@@ -415,8 +416,16 @@ Route paths are **Polish and part of the contract** — don't rename them withou
     `target`; use for progress bars so they fill on mount. The consuming element must carry its
     own `transition-all`/`transition-[width]`.
 - **Loading pattern (no-flicker):** pages keep a `hasLoaded` flag alongside `loading`. Show the
-  spinner only while `loading && !hasLoaded`; once data has loaded at least once, re-fetches
+  placeholder only while `loading && !hasLoaded`; once data has loaded at least once, re-fetches
   dim the existing content (`opacity-50 pointer-events-none`) instead of unmounting it.
+- **First-load placeholders** (`components/Skeleton.jsx` + the `.skeleton` shimmer in
+  `index.css`): spinners are gone — a page renders a placeholder layout that mirrors its loaded
+  shape: `SkeletonGrid` of `StatCardSkeleton`/`StatTileSkeleton`/`CardSkeleton` for card grids,
+  `ListSkeleton` for row lists, `TableSkeleton` for tables, `ChartSkeleton` for recharts blocks.
+  Compose custom plates from the exported `SKELETON_SURFACE` (light `bg-white / border-gray-100`,
+  dark `dark:bg-slate-800 / dark:border-slate-700`). Each skeleton announces itself **once** with
+  a Polish `sr-only` `role=status`; every shimmer bar sits inside `aria-hidden` decoration.
+  `Skeleton.test.jsx` pins those two properties — keep them when adding a shape.
 - **Date helpers** (`utils/date.js`): `currentMonthStr()` → local `"YYYY-MM"`, `currentYear()`,
   `localDateStr()` → `"YYYY-MM-DD"`, `MONTH_NAMES` + `monthLabel("YYYY-MM")` → `"Wrzesień 2026"`.
   Always use these for "today/this month" defaults — never `new Date().toISOString()` (UTC
@@ -444,9 +453,9 @@ reviews required, stale reviews dismissed. So **a direct `git push` to `main` is
 (also for the owner) and a PR merges only when the check is green — work goes through a
 `feature/*` branch + PR (§11).
 
-The suite (added after the second audit round): **314 backend + 347 frontend tests, all
-green.** A green run is the pre-existing state — if a change breaks one, fix the code, not the
-assertion.
+The suite (grown continuously since the second audit round): **315 backend + 370 frontend
+tests, all green.** A green run is the pre-existing state — if a change breaks one, fix the
+code, not the assertion. Frontend tests are colocated (`src/**/*.test.js[x]`).
 
 ```bash
 python -m pytest backend/tests            # backend: Flask test client + isolated temp DB
