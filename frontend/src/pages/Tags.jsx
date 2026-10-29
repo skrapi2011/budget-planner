@@ -2,6 +2,7 @@ import { useState, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
 import Layout from '../components/Layout';
 import { useToast } from '../components/ToastContext';
+import { CardSkeleton, ListSkeleton } from '../components/Skeleton';
 import { formatMoney } from '../utils/money';
 import * as api from '../api';
 
@@ -108,8 +109,12 @@ export default function Tags() {
       </div>
 
       {loading && !hasLoaded ? (
-        <div className="flex items-center justify-center py-16">
-          <div className="w-8 h-8 border-4 border-gray-200 dark:border-slate-700 border-t-[#32a852] rounded-full animate-spin" />
+        // First load: the tag list column + the detail card, shaped like the loaded grid.
+        <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
+          <ListSkeleton count={6} className="lg:col-span-1" />
+          <div className="lg:col-span-2">
+            <CardSkeleton />
+          </div>
         </div>
       ) : (
         <div className={dimmed ? 'opacity-50 pointer-events-none transition-opacity' : 'transition-opacity'}>

@@ -36,6 +36,16 @@ describe('loading', () => {
     expect(api.getTransactions).not.toHaveBeenCalled();
   });
 
+  it('shows skeleton placeholders before the first load', async () => {
+    const { container } = renderWithProviders(<Tags />);
+    expect(container.querySelectorAll('.skeleton').length).toBeGreaterThan(0);
+    // Six tag-row avatars stand in for the list, plus the detail-card plate.
+    expect(container.querySelectorAll('.skeleton.rounded-full')).toHaveLength(6);
+    expect(screen.getAllByRole('status').length).toBeGreaterThan(0);
+    await screen.findByText('dom');
+    expect(container.querySelector('.skeleton')).toBeNull();
+  });
+
   it('shows a past-month tag, proving the list spans history', async () => {
     renderWithProviders(<Tags />);
     expect(await screen.findByText('stary')).toBeInTheDocument();

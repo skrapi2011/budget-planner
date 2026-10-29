@@ -2,6 +2,12 @@ import { useState, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
 import Layout from '../components/Layout';
 import * as api from '../api';
+import {
+  ChartSkeleton,
+  SKELETON_SURFACE,
+  SkeletonGrid,
+  StatCardSkeleton,
+} from '../components/Skeleton';
 import { LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, Legend } from 'recharts';
 import { currentYear, currentMonthStr } from '../utils/date';
 import { formatMoney } from '../utils/money';
@@ -61,13 +67,33 @@ export default function YearOverview() {
   if (!data) {
     return (
       <Layout>
-        <div className="flex items-center justify-center py-24">
-          {hasLoaded ? (
+        {hasLoaded ? (
+          <div className="flex items-center justify-center py-24">
             <p className="text-gray-500 dark:text-slate-400">Nie udało się załadować danych. Spróbuj ponownie.</p>
-          ) : (
-            <div className="w-10 h-10 border-4 border-gray-200 dark:border-slate-700 border-t-[#32a852] rounded-full animate-spin" />
-          )}
-        </div>
+          </div>
+        ) : (
+          // First load: header plate + 6 summary cards + chart + summary card, per the layout below.
+          <div className="space-y-8">
+            <div className="flex items-center justify-between">
+              <div className={`${SKELETON_SURFACE} rounded-lg p-4 w-12`} aria-hidden="true">
+                <div className="skeleton h-5 w-5" />
+              </div>
+              <div className={`${SKELETON_SURFACE} rounded-lg p-4 w-56`} aria-hidden="true">
+                <div className="skeleton h-5 w-full" />
+              </div>
+              <div className={`${SKELETON_SURFACE} rounded-lg p-4 w-12`} aria-hidden="true">
+                <div className="skeleton h-5 w-5" />
+              </div>
+            </div>
+            <SkeletonGrid count={6} cols="sm:grid-cols-2 lg:grid-cols-3">
+              <StatCardSkeleton />
+            </SkeletonGrid>
+            <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+              <ChartSkeleton />
+              <ChartSkeleton />
+            </div>
+          </div>
+        )}
       </Layout>
     );
   }

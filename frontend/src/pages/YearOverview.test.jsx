@@ -63,11 +63,13 @@ describe('loading', () => {
     expect(api.getYearSummary).toHaveBeenCalledWith(Y_STR);
   });
 
-  it('shows a spinner before the first load', async () => {
+  it('shows skeleton placeholders before the first load', async () => {
     const { container } = renderYear();
-    expect(container.querySelector('.animate-spin')).toBeInTheDocument();
+    expect(container.querySelectorAll('.skeleton').length).toBeGreaterThan(0);
+    expect(screen.getAllByRole('status').length).toBeGreaterThan(0);
     await screen.findByText('Roczne wydatki');
-    expect(container.querySelector('.animate-spin')).toBeNull();
+    expect(container.querySelector('.skeleton')).toBeNull();
+    expect(screen.queryAllByRole('status')).toHaveLength(0);
   });
 
   it('a failed request shows a Polish retry message, not a crash', async () => {

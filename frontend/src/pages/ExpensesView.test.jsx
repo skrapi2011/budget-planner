@@ -69,11 +69,14 @@ describe('loading', () => {
     expect(api.getCategories).toHaveBeenCalledWith(true);
   });
 
-  it('shows a spinner before the first load and keeps the list on refetches', async () => {
+  it('shows skeleton placeholders before the first load and keeps the list on refetches', async () => {
     const { container } = renderExpenses();
-    expect(container.querySelector('.animate-spin')).toBeInTheDocument();
+    expect(container.querySelectorAll('.skeleton').length).toBeGreaterThan(0);
+    expect(screen.getAllByRole('status').length).toBeGreaterThan(0);
     await screen.findByText('160,00 zł');
-    expect(container.querySelector('.animate-spin')).toBeNull();
+    // Placeholders are fully gone once the data renders.
+    expect(container.querySelector('.skeleton')).toBeNull();
+    expect(screen.queryAllByRole('status')).toHaveLength(0);
   });
 
   it('survives failed requests with empty lists', async () => {

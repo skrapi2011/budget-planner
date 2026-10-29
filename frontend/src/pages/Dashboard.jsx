@@ -2,6 +2,7 @@ import { useState, useEffect, useCallback, useRef } from 'react';
 import { useNavigate } from 'react-router-dom';
 import Layout from '../components/Layout';
 import AddExpenseModal from '../components/AddExpenseModal';
+import { ChartSkeleton, ListSkeleton, SkeletonGrid, StatCardSkeleton } from '../components/Skeleton';
 import { currentMonthStr, monthLabel } from '../utils/date';
 import { formatMoney } from '../utils/money';
 import { useAnimatedValue, useCountUp } from '../hooks/animation';
@@ -115,7 +116,22 @@ export default function Dashboard() {
   };
 
   if (!dashData) {
-    return <Layout><div className="flex items-center justify-center py-24"><div className="w-10 h-10 border-4 border-gray-200 dark:border-slate-700 border-t-[#32a852] rounded-full animate-spin" /></div></Layout>;
+    // First load (or a failed dashboard request): placeholders shaped like the real page —
+    // 4 stat cards, 2 charts, a category list — so content swaps in without layout jump.
+    return (
+      <Layout>
+        <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8 space-y-8">
+          <SkeletonGrid count={4} cols="lg:grid-cols-4">
+            <StatCardSkeleton />
+          </SkeletonGrid>
+          <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+            <ChartSkeleton />
+            <ChartSkeleton />
+          </div>
+          <ListSkeleton count={6} />
+        </div>
+      </Layout>
+    );
   }
 
   const { total_all_time = 0, prev_month_total = 0, month_total = 0, current_planned = 0, monthly_history = [] } = dashData;
