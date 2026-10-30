@@ -22,8 +22,8 @@ const parseAmt = (v) => {
 // Backend status is exactly 'over_budget' | 'in_budget' (see _budgets_view); the old
 // 'przekroczony' string never reaches the frontend (audit P1-28).
 const getBarStatus = (status, pct) => {
-  if (status === 'over_budget' || pct >= 100) return { bg: 'bg-red-500', label: 'Przekroczony', color: 'text-red-600' };
-  if (pct >= 80) return { bg: 'bg-amber-500', label: 'Uwaga', color: 'text-amber-600' };
+  if (status === 'over_budget' || pct >= 100) return { bg: 'bg-red-500', label: 'Przekroczony', color: 'text-red-600 dark:text-red-400' };
+  if (pct >= 80) return { bg: 'bg-amber-500', label: 'Uwaga', color: 'text-amber-600 dark:text-amber-400' };
   return { bg: 'bg-gradient-to-r from-[#32a852] to-[#4dd97a]', label: 'OK', color: 'text-[#32a852]' };
 };
 
@@ -328,7 +328,7 @@ export default function Budzety() {
                         <p className={`text-sm font-medium ${statusInfo.color}`}>{statusInfo.label}</p>
                       </div>
                       {limit > 0 && (
-                        <span className={`text-base font-bold tabular-nums ${remainder >= 0 ? 'text-green-600' : 'text-red-600'}`}>
+                        <span className={`text-base font-bold tabular-nums ${remainder >= 0 ? 'text-green-600 dark:text-green-400' : 'text-red-600 dark:text-red-400'}`}>
                           {formatMoney(remainder)}
                         </span>
                       )}

@@ -104,6 +104,11 @@ describe('deep links (audit P0-23 / Dashboard donut)', () => {
     expect(api.getTransactions).toHaveBeenCalledWith(currentMonthStr());
   });
 
+  it('?miesiac=2026-13 (a bare \\d{2} shape the backend 400s on) falls back to the current month', async () => {
+    await renderAndLoad('/wydatki?miesiac=2026-13');
+    expect(api.getTransactions).toHaveBeenCalledWith(currentMonthStr());
+  });
+
   it('?kategoria pre-selects that category and shows only its transactions', async () => {
     const user = userEvent.setup();
     await renderAndLoad('/wydatki?kategoria=1');

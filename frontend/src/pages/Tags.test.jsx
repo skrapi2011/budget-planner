@@ -8,6 +8,12 @@ import { renderWithProviders } from '../test/renderPage';
 // Audit P1-52 (AGENTS.md §9.10): the tag row used to be a <button> containing the
 // rename/delete <button>s. Nested buttons are invalid HTML. The first test is the net.
 
+const { navigateMock } = vi.hoisted(() => ({ navigateMock: vi.fn() }));
+vi.mock('react-router-dom', async (importOriginal) => ({
+  ...(await importOriginal()),
+  useNavigate: () => navigateMock,
+}));
+
 // The page loads asynchronously, so tests that act on the list must wait for it first.
 async function renderAndLoad() {
   renderWithProviders(<Tags />);
@@ -259,6 +265,14 @@ describe('Polish UI', () => {
     api.getAllTags.mockResolvedValue([]);
     api.getTransactionsAll.mockResolvedValue([]);
     renderWithProviders(<Tags />);
-    expect(await screen.findByText(/Brak tagów w bieżącym miesiącu/)).toBeInTheDocument();
+    expect(await screen.findByText(/Brak tagów/)).toBeInTheDocument();
+  });
+
+  it('row jump carries the transaction month, so the target page shows it', async () => {
+    await renderAndLoad();
+    await userEvent.click(screen.getByRole('button', { name: 'Pokaż transakcje z tagiem dom' }));
+    // First row of tag "dom" is tx 1 (2026-05-10).
+    fireEvent.click(screen.getAllByLabelText('Przejdź do wydatków')[0]);
+    expect(navigateMock).toHaveBeenCalledWith('/wydatki?miesiac=2026-05');
   });
 });

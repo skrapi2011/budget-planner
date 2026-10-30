@@ -194,7 +194,7 @@ function Form({ isOpen, categories, onClose, onSubmit, initial = null }) {
 
       {/* buttons */}
       <div className="flex gap-3 justify-end pt-2">
-        <button type="button" onClick={handleCancel} className="px-4 py-2 text-sm font-medium rounded-md shadow-sm bg-gray-200 hover:bg-gray-300 transition-colors">
+        <button type="button" onClick={handleCancel} className="px-4 py-2 text-sm font-medium rounded-md shadow-sm bg-gray-200 hover:bg-gray-300 dark:bg-slate-700 dark:hover:bg-slate-600 text-gray-700 dark:text-slate-300 transition-colors">
           Anuluj
         </button>
         <button type="submit" className="px-4 py-2 text-sm font-medium rounded-md shadow-sm text-white bg-[#32a852] hover:bg-[#1f8c42] transition-colors">

@@ -24,7 +24,9 @@ async function _fetch(url, options) {
     }
     throw new Error('Unauthorized');
   }
-  const data = await response.json();
+  // .catch: a proxy failure (backend down) answers non-JSON; json() would throw a raw
+  // SyntaxError ("Unexpected end of JSON input") that pages toast verbatim.
+  const data = await response.json().catch(() => null);
   if (!response.ok) {
     const message = data?.error || 'Coś poszło nie tak — sprawdź połączenie z serwerem';
     throw new Error(message);

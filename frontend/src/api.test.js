@@ -109,6 +109,15 @@ describe('401 session expiry', () => {
     await expect(api.register('a', 'x', 'x')).rejects.toThrow('Hasło musi mieć co najmniej 4 znaki');
   });
 
+  it('answers the Polish fallback (not a raw SyntaxError) when the body is not JSON (proxy failure with the backend down)', async () => {
+    vi.spyOn(globalThis, 'fetch').mockImplementation(async () => ({
+      ok: false,
+      status: 502,
+      json: async () => { throw new SyntaxError('Unexpected end of JSON input'); },
+    }));
+    await expect(api.getCategories()).rejects.toThrow('Coś poszło nie tak');
+  });
+
   it('has a generic fallback when the error body has no message', async () => {
     fetch.mockImplementation(async (u, o) => { calls.push([u, o]); return respond({}, 500); });
     // Polish: the backend messages are Polish (AGENTS.md §6.3) and pages toast err.message
