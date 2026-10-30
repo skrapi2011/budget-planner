@@ -105,7 +105,7 @@ export default function Tags() {
     <Layout>
       <div className="mb-6">
         <h2 className="text-xl font-bold text-gray-900 mb-1 dark:text-slate-100">Tagi</h2>
-        <p className="text-sm text-gray-500 dark:text-slate-400">Przeglądaj i zarządzaj transakcjami według tagów (bieżący miesiąc)</p>
+        <p className="text-sm text-gray-500 dark:text-slate-400">Przeglądaj i zarządzaj transakcjami według tagów (cała historia)</p>
       </div>
 
       {loading && !hasLoaded ? (
@@ -119,7 +119,7 @@ export default function Tags() {
       ) : (
         <div className={dimmed ? 'opacity-50 pointer-events-none transition-opacity' : 'transition-opacity'}>
           {tags.length === 0 ? (
-            <p className="text-center text-gray-500 dark:text-slate-400 py-8 bg-white dark:bg-slate-800 rounded-lg shadow-sm">Brak tagów w bieżącym miesiącu.</p>
+            <p className="text-center text-gray-500 dark:text-slate-400 py-8 bg-white dark:bg-slate-800 rounded-lg shadow-sm">Brak tagów.</p>
           ) : (
             <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
               {/* Lewy panel: lista tagów */}
@@ -246,7 +246,9 @@ function TransactionRow({ tx }) {
         {formatMoney(Math.abs(Number(tx.amount) || 0))}
       </span>
 
-      <button onClick={() => navigate('/wydatki')} className="ml-3 p-1.5 text-gray-400 hover:text-[#32a852] rounded-md" aria-label="Przejdź do wydatków">
+      {/* carry the tx's month: ExpensesView defaults to the current month, so a jump from
+          an old transaction would land where that transaction is invisible (YearOverview:303 does the same). */}
+      <button onClick={() => navigate(`/wydatki?miesiac=${String(tx.date).slice(0, 7)}`)} className="ml-3 p-1.5 text-gray-400 hover:text-[#32a852] rounded-md" aria-label="Przejdź do wydatków">
         <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M13.828 10.172a4 4 0 00-5.656 0l-4 4a4 4 0 105.656 5.656l1.102-1.101" /></svg>
       </button>
     </div>

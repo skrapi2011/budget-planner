@@ -189,7 +189,7 @@ export default function CategoriesView() {
           {/* Right panel - category list */}
           <div className="lg:col-span-2">
             {categories.length === 0 ? (
-              <p className="text-center text-gray-500 py-8 bg-white rounded-lg shadow-sm">Brak kategorii</p>
+              <p className="text-center text-gray-500 dark:text-slate-400 py-8 bg-white dark:bg-slate-800 rounded-lg shadow-sm">Brak kategorii</p>
             ) : (
 <div className="bg-white dark:bg-slate-800 rounded-lg shadow-sm overflow-hidden border border-gray-200 dark:border-slate-700">
                 <table className="min-w-full divide-y divide-gray-200 dark:divide-slate-700">

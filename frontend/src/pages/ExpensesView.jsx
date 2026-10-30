@@ -25,7 +25,9 @@ import { useToast } from '../components/ToastContext';
   // Deep link may also carry the month shown on the Dashboard (?miesiac=YYYY-MM).
   const miesiacParam = searchParams.get('miesiac');
   const [monthStr, setMonthStr] = useState(() =>
-    miesiacParam && /^\d{4}-\d{2}$/.test(miesiacParam) ? miesiacParam : currentMonthStr()
+    // month 00/13+ passes a bare \d{2} regex; the backend 400s and the page shows an
+    // unexplained empty list.
+    miesiacParam && /^\d{4}-(0[1-9]|1[0-2])$/.test(miesiacParam) ? miesiacParam : currentMonthStr()
   );
   // Category picked in the dropdown; null = follow the ?kategoria deep-link param.
   const [categoryChoice, setCategoryChoice] = useState(null);
@@ -238,7 +240,7 @@ import { useToast } from '../components/ToastContext';
               ))}
             </select>
 
-            <input type="text" value={searchTerm} onChange={(e) => setSearchTerm(e.target.value)} placeholder="Szukaj..." className="flex-1 min-w-[200px] px-3 py-1.5 rounded-md border border-gray-300 focus:border-[#32a852] focus:ring-[#32a852] sm:text-sm" />
+            <input type="text" value={searchTerm} onChange={(e) => setSearchTerm(e.target.value)} placeholder="Szukaj..." className="flex-1 min-w-[200px] px-3 py-1.5 rounded-md border border-gray-300 dark:border-slate-600 bg-white dark:bg-slate-700 text-gray-800 dark:text-slate-200 focus:border-[#32a852] focus:ring-[#32a852] sm:text-sm" />
           </div>
 
           {Object.keys(grouped).length === 0 ? (
